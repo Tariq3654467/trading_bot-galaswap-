@@ -1,0 +1,50 @@
+{
+  "priceLimits": [
+    {
+      "collection": "GALA",
+      "category": "Unit",
+      "type": "none",
+      "additionalKey": "none",
+      "min": 0,
+      "max": 100
+    }
+  ],
+  "projectTokens": [
+    {
+      "symbol": "WEN"
+    }
+  ],
+  "binance": {
+    "enabled": false,
+    "mappings": [
+      {
+        "galaToken": {
+          "collection": "GALA",
+          "category": "Unit",
+          "type": "none",
+          "additionalKey": "none"
+        },
+        "binanceSymbol": "GALAUSDT",
+        "quoteCurrency": "USDT"
+      }
+    ],
+    "defaultQuoteCurrency": "USDT",
+    "priceCombinationMethod": "average",
+    "galaswapWeight": 0.5,
+    "binanceWeight": 0.5,
+    "trading": {
+      "enabled": false,
+      "minTradeAmount": 10,
+      "maxTradeAmount": 10000,
+      "defaultOrderType": "MARKET",
+      "tradingPairs": [
+        {
+          "baseAsset": "GALA",
+          "quoteAsset": "USDT",
+          "symbol": "GALAUSDT",
+          "minNotional": 10
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,38 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    environment:
+      - MONGO_URI=mongodb://root:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      - GALA_WALLET_ADDRESS=${GALA_WALLET_ADDRESS}
+      - GALA_PRIVATE_KEY=${GALA_PRIVATE_KEY}
+      - SLACK_WEBHOOK_URI=${SLACK_WEBHOOK_URI}
+      - SLACK_ALERT_WEBHOOK_URI=${SLACK_ALERT_WEBHOOK_URI}
+      - GALASWAP_API_BASE_URI=${GALASWAP_API_BASE_URI}
+      - GALASWAP_REQUEST_TIMEOUT_MS=${GALASWAP_REQUEST_TIMEOUT_MS:-30000}
+      - GALASWAP_CONNECT_TIMEOUT_MS=${GALASWAP_CONNECT_TIMEOUT_MS:-15000}
+      - EXECUTION_DELAY_MS=${EXECUTION_DELAY_MS}
+      - IGNORE_SWAPS_CREATED_BEFORE=${IGNORE_SWAPS_CREATED_BEFORE}
+      - DISCORD_WEBHOOK_URI=${DISCORD_WEBHOOK_URI}
+      - DISCORD_ALERT_WEBHOOK_URI=${DISCORD_ALERT_WEBHOOK_URI}
+      - LOOP_WAIT_MS=${LOOP_WAIT_MS}
+      - BINANCE_ENABLED=${BINANCE_ENABLED:-false}
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET}
+      - GALADEFI_ENABLED=${GALADEFI_ENABLED:-false}
+      - GALADEFI_API_BASE_URI=${GALADEFI_API_BASE_URI:-https://dex-backend-prod1.defi.gala.com}
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
+    ports:
+      - '0.0.0.0:50002:27017'
+    volumes:
+      - ./mongodata:/data/db

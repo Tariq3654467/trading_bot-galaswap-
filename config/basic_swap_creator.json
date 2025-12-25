@@ -14,11 +14,11 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 1.05,
-      "minProfitability": 1.01,
-      "maxProfitability": 1.15,
-      "targetGivingSize": 10,
-      "maxPriceMovementPercent": 0.03,
+      "targetProfitability": 0.95,
+      "minProfitability": 0.90,
+      "maxProfitability": 1.50,
+      "targetGivingSize": 1,
+      "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     },
     {
@@ -34,11 +34,11 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 1.05,
-      "minProfitability": 1.01,
-      "maxProfitability": 1.15,
+      "targetProfitability": 0.95,
+      "minProfitability": 0.90,
+      "maxProfitability": 1.50,
       "targetGivingSize": 100,
-      "maxPriceMovementPercent": 0.03,
+      "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     },
     {
@@ -54,11 +54,11 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 1.05,
-      "minProfitability": 1.01,
-      "maxProfitability": 1.15,
-      "targetGivingSize": 10,
-      "maxPriceMovementPercent": 0.03,
+      "targetProfitability": 0.95,
+      "minProfitability": 0.90,
+      "maxProfitability": 1.50,
+      "targetGivingSize": 1,
+      "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     },
     {
@@ -74,11 +74,11 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 1.05,
-      "minProfitability": 1.01,
-      "maxProfitability": 1.15,
+      "targetProfitability": 0.95,
+      "minProfitability": 0.90,
+      "maxProfitability": 1.50,
       "targetGivingSize": 100,
-      "maxPriceMovementPercent": 0.03,
+      "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     }
   ],

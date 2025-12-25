@@ -9,6 +9,7 @@ import { BinanceTrading, IBinanceTradingConfig } from './dependencies/binance/bi
 import { MongoCreatedSwapStore } from './dependencies/created_swap_store.js';
 import { GalaDeFiApi } from './dependencies/galadefi/galadefi_api.js';
 import { GalaSwapApi } from './dependencies/galaswap/galaswap_api.js';
+import { GalaChainRouter } from './dependencies/onchain/galachain_router.js';
 import { MongoPriceStore } from './dependencies/price_store.js';
 import {
   ConsoleStatusReporter,
@@ -43,9 +44,12 @@ async function main(logger: ILogger) {
   const discordAlertWebhookUri =
     (await configuration.getOptional('DISCORD_ALERT_WEBHOOK_URI')) ?? discordInfoWebhookUri;
 
+  // GalaSwap API - Updated 2025 GalaChain API
+  // Uses the new GalaChain 2.0 API endpoints (/v1/token-contract/, etc.)
+  // For new HFT DEX trading, use GalaDeFi API instead
   const galaSwapApiBaseUri = await configuration.getOptionalWithDefault(
     'GALASWAP_API_BASE_URI',
-    'https://api-galaswap.gala.com',
+    'https://api-galaswap.gala.com', // Updated 2025 GalaChain Gateway API
   );
 
   // GalaSwap API timeout configuration
@@ -57,10 +61,26 @@ async function main(logger: ILogger) {
   );
 
   // GalaDeFi DEX API configuration
+  // NOTE: DEX API is NOT officially supported by Gala. Use on-chain router instead.
+  // This is kept for backward compatibility only.
   const galaDeFiEnabled = (await configuration.getOptionalWithDefault('GALADEFI_ENABLED', 'false')) === 'true';
   const galaDeFiApiBaseUri = await configuration.getOptionalWithDefault(
     'GALADEFI_API_BASE_URI',
-    'https://dex-backend-prod1.defi.gala.com',
+    'https://dex-backend-prod1.defi.gala.com', // HFT DEX API endpoint
+  );
+
+  // Blockchain RPC Provider (MANDATORY for on-chain trading)
+  // Used for: swap transactions via GalaChain chaincode contracts
+  const galaRpcUrl = await configuration.getOptionalWithDefault(
+    'GALA_RPC_URL',
+    'https://rpc.gala.com', // Primary RPC endpoint
+  );
+  
+  // GalaChain Chaincode Contract Name (REQUIRED for on-chain trading)
+  // Default: "galachain-gala-swap" (official GalaSwap contract)
+  const galaSwapContractName = await configuration.getOptionalWithDefault(
+    'GALASWAP_CONTRACT_NAME',
+    'galachain-gala-swap',
   );
 
   // Binance configuration
@@ -100,7 +120,7 @@ async function main(logger: ILogger) {
     'LOOP_WAIT_MS must be a non-negative integer',
   );
 
-  /* End of settings */
+  /* End of sehttps://dex-backend-prod1.defi.gala.comttings */
 
   /* Dependencies */
 
@@ -112,6 +132,38 @@ async function main(logger: ILogger) {
 
   await Promise.all([createdSwapStore.init(), acceptedSwapStore.init(), priceStore.init()]);
 
+  // Initialize GalaChain Router for direct chaincode contract trading
+  // Uses Token Class Keys (not hex addresses) and chaincode contracts
+  // Contract Name: "galachain-gala-swap" (official GalaSwap contract)
+  // MUST be initialized before GalaSwapApi so it can be passed to it
+  const galaChainRouter = galaRpcUrl
+    ? new GalaChainRouter(
+        galaRpcUrl,
+        selfWalletAddress,
+        selfPrivateKey,
+        logger,
+        galaSwapContractName,
+      )
+    : null;
+
+  if (galaChainRouter) {
+    logger.info(
+      {
+        rpcUrl: galaRpcUrl,
+        contractName: galaChainRouter.getContractName(),
+        walletAddress: galaChainRouter.getWalletAddress(),
+      },
+      'GalaChain router initialized for direct chaincode contract trading (using Token Class Keys)',
+    );
+  } else {
+    logger.warn(
+      {
+        hasRpcUrl: !!galaRpcUrl,
+      },
+      'GalaChain router not initialized - RPC URL required',
+    );
+  }
+
   const galaSwapApi = new GalaSwapApi(
     galaSwapApiBaseUri,
     selfWalletAddress,
@@ -121,6 +173,7 @@ async function main(logger: ILogger) {
     {
       requestTimeoutMs: galaSwapRequestTimeoutMs,
       connectTimeoutMs: galaSwapConnectTimeoutMs,
+      galaChainRouter: galaChainRouter ?? null,
     },
   );
 
@@ -201,6 +254,7 @@ async function main(logger: ILogger) {
         binanceApi,
         binanceTrading,
         galaDeFiApi,
+        galaChainRouter,
         tokenConfig: defaultTokenConfig,
       },
     );

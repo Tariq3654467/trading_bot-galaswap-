@@ -8,6 +8,7 @@ import {
   IRawSwap,
   ITokenBalance,
 } from '../../dependencies/galaswap/types.js';
+import { GalaChainRouter } from '../../dependencies/onchain/galachain_router.js';
 import { MongoPriceStore } from '../../dependencies/price_store.js';
 import { IStatusReporter } from '../../dependencies/status_reporters.js';
 import { stringifyTokenClass } from '../../types/type_helpers.js';
@@ -40,7 +41,7 @@ export class BasicSwapAccepterStrategy implements ISwapStrategy {
     ownBalances: readonly Readonly<ITokenBalance>[],
     _ownSwaps: readonly Readonly<IRawSwap>[],
     tokenValues: readonly Readonly<IGalaSwapToken>[],
-    options: { now?: Readonly<Date> } = {},
+    options: { now?: Readonly<Date>; galaChainRouter?: GalaChainRouter | null } = {},
   ): ReturnType<ISwapStrategy['doTick']> {
     if (!this.config.active) {
       return {
@@ -57,7 +58,59 @@ export class BasicSwapAccepterStrategy implements ISwapStrategy {
       ownBalances,
       tokenValues,
       this.config.minimumBalances,
-      (givingTokenClass, receivingTokenClass) => {
+      async (givingTokenClass, receivingTokenClass) => {
+        // Try chaincode first, fall back to REST API
+        if (options.galaChainRouter) {
+          try {
+            const chaincodeSwaps = await options.galaChainRouter.getAvailableSwaps(
+              givingTokenClass,
+              receivingTokenClass,
+            );
+            if (chaincodeSwaps.length > 0) {
+              // Convert chaincode format to IRawSwap format
+              const swaps: IRawSwap[] = chaincodeSwaps.map((swap) => {
+                const offeredFirst = swap.offered[0];
+                const wantedFirst = swap.wanted[0];
+                if (!offeredFirst || !wantedFirst) {
+                  throw new Error('Invalid swap format: missing offered or wanted token');
+                }
+                return {
+                  swapRequestId: swap.swapRequestId,
+                  offered: [
+                    {
+                      quantity: offeredFirst.quantity,
+                      tokenInstance: {
+                        ...offeredFirst.tokenInstance,
+                        instance: '0' as const,
+                      },
+                    },
+                  ] as [Readonly<{ quantity: string; tokenInstance: Readonly<ITokenClassKey & { instance: '0' }> }>],
+                  wanted: [
+                    {
+                      quantity: wantedFirst.quantity,
+                      tokenInstance: {
+                        ...wantedFirst.tokenInstance,
+                        instance: '0' as const,
+                      },
+                    },
+                  ] as [Readonly<{ quantity: string; tokenInstance: Readonly<ITokenClassKey & { instance: '0' }> }>],
+                  created: swap.created,
+                  expires: swap.expires,
+                  uses: swap.uses,
+                  usesSpent: swap.usesSpent,
+                  offeredBy: swap.offeredBy,
+                };
+              });
+              return swaps;
+            }
+          } catch (error) {
+            _logger.warn(
+              { error, givingTokenClass, receivingTokenClass },
+              'Failed to get swaps via chaincode, trying REST API',
+            );
+          }
+        }
+        // Fall back to REST API
         return galaSwapApi.getAvailableSwaps(givingTokenClass, receivingTokenClass);
       },
       async (givingTokenClass, receivingTokenClass, since, goodnessRating) => {

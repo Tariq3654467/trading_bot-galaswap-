@@ -27,13 +27,17 @@ export class MongoPriceStore {
     prices: Array<Omit<IPriceHistory, 'timeRecorded' | 'stringifiedTokenClass'>>,
     timeRecorded: Date,
   ) {
-    await this.collection.insertMany(
-      prices.map((price) => ({
-        ...price,
-        timeRecorded,
-        stringifiedTokenClass: stringifyTokenClass(price.tokenClass),
-      })),
-    );
+    const resultData = prices.map((price) => ({
+      ...price,
+      timeRecorded,
+      stringifiedTokenClass: stringifyTokenClass(price.tokenClass),
+    }));
+
+    // Guard clause: MongoDB does not allow insertMany on empty arrays
+    if (resultData && resultData.length > 0) {
+      await this.collection.insertMany(resultData);
+    }
+    // If empty, skip database update (no error thrown)
   }
 
   async getPriceChangePercent(

@@ -41,6 +41,7 @@ export class BasicSwapCreatorStrategy implements ISwapStrategy {
     tokenValues: readonly Readonly<IGalaSwapToken>[],
     options: {
       now?: Date;
+      galaChainRouter?: import('../../dependencies/onchain/galachain_router.js').GalaChainRouter | null;
     },
   ): ReturnType<ISwapStrategy['doTick']> {
     if (!this.config.active) {

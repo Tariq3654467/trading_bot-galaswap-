@@ -19,6 +19,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.535.0",
+    "@gala-chain/gswap-sdk": "0.0.10",
     "bignumber.js": "^9.1.2",
     "bn.js": "^5.2.1",
     "dotenv": "^16.4.5",

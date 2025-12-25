@@ -28,6 +28,7 @@ export async function getSwapsToCreate(
   ) => Promise<number | undefined>,
   options?: {
     now?: Date;
+    galaChainRouter?: import('../../dependencies/onchain/galachain_router.js').GalaChainRouter | null;
   },
 ) {
   const nowMs = options?.now?.getTime() ?? Date.now();
@@ -88,10 +89,17 @@ export async function getSwapsToCreate(
       continue;
     }
 
-    if (Number(givingBalanceForThisTarget) < target.targetGivingSize) {
+    const availableBalance = Number(givingBalanceForThisTarget);
+    const requiredBalance = target.targetGivingSize;
+    
+    if (availableBalance < requiredBalance) {
       logger.info({
         message: 'Ignoring target, insufficient balance to create',
         target,
+        availableBalance,
+        requiredBalance,
+        balanceDifference: availableBalance - requiredBalance,
+        givingTokenClass: stringifyTokenClass(target.givingTokenClass),
       });
 
       continue;
@@ -160,12 +168,51 @@ export async function getSwapsToCreate(
           ]
         : [];
 
-    const currentMarketRate = getCurrentMarketRate(
+    let currentMarketRate = getCurrentMarketRate(
       target.givingTokenClass,
       target.receivingTokenClass,
       tokenValues,
       minimumTokenValues,
     );
+
+    // If market rate is not available from token prices, try using SDK quote as fallback
+    if (currentMarketRate === undefined && options?.galaChainRouter) {
+      try {
+        logger.info(
+          {
+            givingTokenClass: target.givingTokenClass,
+            receivingTokenClass: target.receivingTokenClass,
+            amountIn: amountToGive.toString(),
+          },
+          'Token prices not available, using SDK quote to calculate market rate',
+        );
+        const quote = await options.galaChainRouter.getQuote(
+          target.givingTokenClass,
+          target.receivingTokenClass,
+          amountToGive.toString(),
+        );
+        // Calculate rate: amountOut / amountIn
+        const rate = Number(quote.amountOut) / Number(amountToGive);
+        if (!Number.isNaN(rate) && rate > 0) {
+          currentMarketRate = rate as import('../../utils/get_current_market_rate.js').CurrentMarketRate;
+          logger.info(
+            {
+              givingTokenClass: target.givingTokenClass,
+              receivingTokenClass: target.receivingTokenClass,
+              marketRate: currentMarketRate,
+              amountIn: amountToGive.toString(),
+              amountOut: quote.amountOut,
+            },
+            'Market rate calculated from SDK quote',
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          { error, givingTokenClass: target.givingTokenClass, receivingTokenClass: target.receivingTokenClass },
+          'Failed to get quote from SDK for market rate calculation',
+        );
+      }
+    }
 
     assert(currentMarketRate !== undefined, 'No current market rate found');
 
@@ -180,17 +227,49 @@ export async function getSwapsToCreate(
       .multipliedBy(target.targetProfitability)
       .toFixed(receivingTokenRoundingConfig.decimalPlaces, BigNumber.ROUND_CEIL);
 
-    const decimalsForGivingToken = tokenValues.find((token) =>
+    let decimalsForGivingToken = tokenValues.find((token) =>
       areSameTokenClass(token, target.givingTokenClass),
     )?.decimals;
 
-    assert(decimalsForGivingToken !== undefined, 'No decimals found for giving token');
+    // Default decimals if not found (common defaults: GALA=8, GUSDC/GUSDT=6)
+    if (decimalsForGivingToken === undefined) {
+      if (target.givingTokenClass.collection === 'GALA') {
+        decimalsForGivingToken = 8;
+      } else if (target.givingTokenClass.collection === 'GUSDC' || target.givingTokenClass.collection === 'GUSDT') {
+        decimalsForGivingToken = 6;
+      } else {
+        decimalsForGivingToken = 8; // Default fallback
+      }
+      logger.warn(
+        {
+          givingTokenClass: target.givingTokenClass,
+          assumedDecimals: decimalsForGivingToken,
+        },
+        'Decimals not found for giving token, using default',
+      );
+    }
 
-    const decimalsForReceivingToken = tokenValues.find((token) =>
+    let decimalsForReceivingToken = tokenValues.find((token) =>
       areSameTokenClass(token, target.receivingTokenClass),
     )?.decimals;
 
-    assert(decimalsForReceivingToken !== undefined, 'No decimals found for receiving token');
+    // Default decimals if not found
+    if (decimalsForReceivingToken === undefined) {
+      if (target.receivingTokenClass.collection === 'GALA') {
+        decimalsForReceivingToken = 8;
+      } else if (target.receivingTokenClass.collection === 'GUSDC' || target.receivingTokenClass.collection === 'GUSDT') {
+        decimalsForReceivingToken = 6;
+      } else {
+        decimalsForReceivingToken = 8; // Default fallback
+      }
+      logger.warn(
+        {
+          receivingTokenClass: target.receivingTokenClass,
+          assumedDecimals: decimalsForReceivingToken,
+        },
+        'Decimals not found for receiving token, using default',
+      );
+    }
 
     const newSwapConfig = calculateSwapQuantitiesAndUses(
       decimalsForGivingToken,

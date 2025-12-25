@@ -6,7 +6,8 @@ import { BinanceTrading } from './dependencies/binance/binance_trading.js';
 import { IBinanceTokenMappingConfig } from './dependencies/binance/token_mapping.js';
 import { MongoCreatedSwapStore } from './dependencies/created_swap_store.js';
 import { IGalaDeFiApi } from './dependencies/galadefi/galadefi_api.js';
-import { IGalaSwapApi } from './dependencies/galaswap/types.js';
+import { IGalaSwapApi, IGalaSwapToken, IRawSwap, ITokenBalance } from './dependencies/galaswap/types.js';
+import { GalaChainRouter } from './dependencies/onchain/galachain_router.js';
 import { aggregatePrices, IEnhancedTokenPrice } from './dependencies/price_aggregator.js';
 import { MongoPriceStore } from './dependencies/price_store.js';
 import { IStatusReporter } from './dependencies/status_reporters.js';
@@ -60,6 +61,7 @@ export async function mainLoopTick(
     binanceMappingConfig?: IBinanceTokenMappingConfig;
     binanceTrading?: BinanceTrading | null;
     galaDeFiApi?: IGalaDeFiApi | null;
+    galaChainRouter?: GalaChainRouter | null;
   } = {},
 ) {
   try {
@@ -68,21 +70,99 @@ export async function mainLoopTick(
     // let us ignore those. If we know that we do not have any swaps that were created
     // before a certain date and which are still active, we can set this option to that
     // date to avoid processing those swaps.
-    const ownSwaps = (await galaSwapApi.getSwapsByWalletAddress(ownWalletAddress)).filter(
-      (swap) =>
-        !options.ignoreSwapsCreatedBefore ||
-        new Date(swap.created) >= options.ignoreSwapsCreatedBefore,
-    );
+    // Try chaincode first, fall back to REST API
+    let ownSwaps: readonly Readonly<IRawSwap>[];
+    try {
+      if (options.galaChainRouter) {
+        // Note: getSwapsByWalletAddress via chaincode - may need to implement this method
+        // For now, fall through to REST API
+        ownSwaps = (await galaSwapApi.getSwapsByWalletAddress(ownWalletAddress)).filter(
+          (swap) =>
+            !options.ignoreSwapsCreatedBefore ||
+            new Date(swap.created) >= options.ignoreSwapsCreatedBefore,
+        );
+      } else {
+        ownSwaps = (await galaSwapApi.getSwapsByWalletAddress(ownWalletAddress)).filter(
+          (swap) =>
+            !options.ignoreSwapsCreatedBefore ||
+            new Date(swap.created) >= options.ignoreSwapsCreatedBefore,
+        );
+      }
+    } catch (error) {
+      logger.warn({ error }, 'Failed to get swaps, using empty array');
+      ownSwaps = [];
+    }
 
-    const ownBalances = await galaSwapApi.getRawBalances(ownWalletAddress);
-    const trendingTokenValues = (await galaSwapApi.getTokens()).tokens;
+    // Try chaincode first for balances, fall back to REST API
+    let ownBalances: readonly Readonly<ITokenBalance>[];
+    try {
+      if (options.galaChainRouter) {
+        ownBalances = await options.galaChainRouter.getBalances(ownWalletAddress);
+        if (ownBalances.length === 0) {
+          // Fall back to REST API if chaincode returns empty
+          logger.info('Chaincode returned empty balances, trying REST API');
+          ownBalances = await galaSwapApi.getRawBalances(ownWalletAddress);
+        }
+      } else {
+        ownBalances = await galaSwapApi.getRawBalances(ownWalletAddress);
+      }
+    } catch (error) {
+      logger.warn({ error }, 'Failed to get balances via chaincode, trying REST API');
+      try {
+        ownBalances = await galaSwapApi.getRawBalances(ownWalletAddress);
+      } catch (restError) {
+        logger.error({ error: restError }, 'Failed to get balances from both chaincode and REST API');
+        ownBalances = [];
+      }
+    }
+
+    // Try chaincode first for tokens, fall back to REST API
+    let trendingTokenValues: readonly Readonly<IGalaSwapToken>[];
+    try {
+      if (options.galaChainRouter) {
+        trendingTokenValues = await options.galaChainRouter.getTokens();
+        if (trendingTokenValues.length === 0) {
+          // Fall back to REST API if chaincode returns empty
+          logger.info('Chaincode returned empty tokens, trying REST API');
+          trendingTokenValues = (await galaSwapApi.getTokens()).tokens;
+        }
+      } else {
+        trendingTokenValues = (await galaSwapApi.getTokens()).tokens;
+      }
+    } catch (error) {
+      logger.warn({ error }, 'Failed to get tokens via chaincode, trying REST API');
+      try {
+        trendingTokenValues = (await galaSwapApi.getTokens()).tokens;
+      } catch (restError) {
+        logger.error({ error: restError }, 'Failed to get tokens from both chaincode and REST API');
+        trendingTokenValues = [];
+      }
+    }
 
     const projectTokensConfig =
       options.tokenConfig?.projectTokens || defaultTokenConfig.projectTokens;
+    // Get project tokens - try chaincode first, fall back to REST API
     const projectTokenValues = (
       await Promise.all(
         projectTokensConfig.map(async (token) => {
-          return (await galaSwapApi.getTokens(token.symbol)).tokens;
+          try {
+            if (options.galaChainRouter) {
+              const chaincodeTokens = await options.galaChainRouter.getTokens(token.symbol);
+              if (chaincodeTokens.length > 0) {
+                return chaincodeTokens;
+              }
+            }
+            // Fall back to REST API
+            return (await galaSwapApi.getTokens(token.symbol)).tokens;
+          } catch (error) {
+            logger.warn({ error, token: token.symbol }, 'Failed to get project token, trying REST API');
+            try {
+              return (await galaSwapApi.getTokens(token.symbol)).tokens;
+            } catch (restError) {
+              logger.error({ error: restError, token: token.symbol }, 'Failed to get project token from both sources');
+              return [];
+            }
+          }
         }),
       )
     ).flat();
@@ -110,7 +190,7 @@ export async function mainLoopTick(
       options.tokenConfig,
     )) as IEnhancedTokenPrice[];
 
-    checkMarketPriceWithinRanges(allTokenValues, options.tokenConfig?.priceLimits);
+    checkMarketPriceWithinRanges(allTokenValues, options.tokenConfig?.priceLimits, logger);
 
     await priceStore.addPrices(
       allTokenValues
@@ -194,19 +274,106 @@ export async function mainLoopTick(
           await sleep(executionDelay);
         }
 
-        const [acceptResult] = await Promise.all([
-          galaSwapApi.acceptSwap(swapToAccept.swapRequestId, swapToAccept.usesToAccept),
-          reportPromise,
-        ]);
-
-        await handleSwapAcceptResult(acceptedSwapStore, reporter, swapToAccept, acceptResult);
+        // Use GalaChain router for direct chaincode swaps (official Gala swap) if available
+        // Otherwise fall back to REST API (legacy)
+        if (options.galaChainRouter) {
+          try {
+            const swapResult = await options.galaChainRouter.acceptSwap(
+              swapToAccept.swapRequestId,
+              swapToAccept.usesToAccept,
+            );
+            logger.info(
+              {
+                transactionId: swapResult.transactionId,
+                swapRequestId: swapToAccept.swapRequestId,
+                contractName: options.galaChainRouter.getContractName(),
+              },
+              'Swap accepted and executed on-chain via GalaChain chaincode contract (official Gala swap)',
+            );
+            // Mark as accepted in store
+            await acceptedSwapStore.addAcceptedSwap(
+              swapToAccept,
+              stringifyTokenClass(swapToAccept.wanted[0].tokenInstance),
+              stringifyTokenClass(swapToAccept.offered[0].tokenInstance),
+              BigNumber(swapToAccept.wanted[0].quantity).multipliedBy(swapToAccept.usesToAccept).toNumber(),
+              BigNumber(swapToAccept.offered[0].quantity)
+                .multipliedBy(swapToAccept.usesToAccept)
+                .toNumber(),
+              swapToAccept.goodnessRating,
+            );
+          } catch (error) {
+            logger.error(
+              { error, swapToAccept },
+              'Failed to execute on-chain swap via chaincode, falling back to REST API',
+            );
+            // Fallback to REST API if chaincode swap fails
+            const [acceptResult] = await Promise.all([
+              galaSwapApi.acceptSwap(swapToAccept.swapRequestId, swapToAccept.usesToAccept),
+              reportPromise,
+            ]);
+            await handleSwapAcceptResult(acceptedSwapStore, reporter, swapToAccept, acceptResult);
+          }
+        } else {
+          // Use REST API (legacy) if GalaChain router is not available
+          logger.warn(
+            'GalaChain router not available, using REST API (legacy). Configure GALA_RPC_URL to use official Gala chaincode swaps.',
+          );
+          const [acceptResult] = await Promise.all([
+            galaSwapApi.acceptSwap(swapToAccept.swapRequestId, swapToAccept.usesToAccept),
+            reportPromise,
+          ]);
+          await handleSwapAcceptResult(acceptedSwapStore, reporter, swapToAccept, acceptResult);
+        }
       }
 
       for (const swapToCreate of swapsToCreate) {
         await reporter.reportCreatingSwap(allTokenValues, swapToCreate);
         await sleep(executionDelay);
-        const createdSwap = await galaSwapApi.createSwap(swapToCreate);
-        await createdSwapStore.addSwap(createdSwap);
+
+        // Use GalaChain router for direct chaincode swaps (official Gala swap) if available
+        // Otherwise fall back to REST API (legacy)
+        if (options.galaChainRouter) {
+          try {
+            const swapResult = await options.galaChainRouter.requestSwap({
+              offered: swapToCreate.offered,
+              wanted: swapToCreate.wanted,
+            });
+            logger.info(
+              {
+                transactionId: swapResult.transactionId,
+                contractName: options.galaChainRouter.getContractName(),
+              },
+              'Swap created and executed on-chain via GalaChain chaincode contract (official Gala swap)',
+            );
+            // Note: On-chain swaps via chaincode are executed immediately, so we still track them
+            // Convert to IRawSwap format for storage
+            const createdSwap: IRawSwap = {
+              ...swapToCreate,
+              swapRequestId: swapResult.transactionId,
+              created: Date.now(),
+              expires: Date.now() + 86400000, // 24 hours default
+              uses: '1',
+              usesSpent: '0',
+              offeredBy: options.galaChainRouter.getWalletAddress(),
+            };
+            await createdSwapStore.addSwap(createdSwap);
+          } catch (error) {
+            logger.error(
+              { error, swapToCreate },
+              'Failed to execute on-chain swap via chaincode, falling back to REST API',
+            );
+            // Fallback to REST API if chaincode swap fails
+            const createdSwap = await galaSwapApi.createSwap(swapToCreate);
+            await createdSwapStore.addSwap(createdSwap);
+          }
+        } else {
+          // Use REST API (legacy) if GalaChain router is not available
+          logger.warn(
+            'GalaChain router not available, using REST API (legacy). Configure GALA_RPC_URL to use official Gala chaincode swaps.',
+          );
+          const createdSwap = await galaSwapApi.createSwap(swapToCreate);
+          await createdSwapStore.addSwap(createdSwap);
+        }
       }
 
       if (hasActionToTake) {

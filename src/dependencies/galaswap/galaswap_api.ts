@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import pRetry from 'p-retry';
 import util from 'util';
 import { ILogger, ITokenClassKey } from '../../types/types.js';
+import { GalaChainRouter } from '../onchain/galachain_router.js';
 import { signObject } from './galachain_signing.js';
 import {
   HttpDelegate,
@@ -46,6 +47,7 @@ export class GalaSwapErrorResponse extends Error {
 
 export class GalaSwapApi implements IGalaSwapApi {
   private readonly signerPublicKey: string;
+  private readonly galaChainRouter: GalaChainRouter | null;
 
   constructor(
     private readonly baseUrl: string,
@@ -53,8 +55,9 @@ export class GalaSwapApi implements IGalaSwapApi {
     private readonly privateKey: string,
     private readonly fetch: HttpDelegate,
     private readonly logger: ILogger,
-    private readonly options: { maxRetries?: number } = {},
+    private readonly options: { maxRetries?: number; requestTimeoutMs?: number; connectTimeoutMs?: number; galaChainRouter?: GalaChainRouter | null } = {},
   ) {
+    this.galaChainRouter = options.galaChainRouter ?? null;
     const publicKeyHex = ethers.SigningKey.computePublicKey(privateKey, true);
     const publicKeyBase64 = Buffer.from(publicKeyHex.replace('0x', ''), 'hex').toString('base64');
     this.signerPublicKey = publicKeyBase64;
@@ -104,11 +107,21 @@ export class GalaSwapApi implements IGalaSwapApi {
       } as RequestInit);
 
       clearTimeout(timeoutId);
-      return response;
+
+      if (!response.ok) {
+        throw new GalaSwapErrorResponse(uri, response.status, await response.text());
+      }
+
+      return response.json() as unknown;
     } catch (error) {
       clearTimeout(timeoutId);
       
-      // Provide better error messages
+      // Re-throw GalaSwapErrorResponse as-is
+      if (error instanceof GalaSwapErrorResponse) {
+        throw error;
+      }
+      
+      // Provide better error messages for network errors
       if (error instanceof Error) {
         if (error.name === 'AbortError' || error.message.includes('timeout')) {
           throw new Error(`GalaSwap API request timeout after ${requestTimeoutMs}ms: ${uri}`);
@@ -123,43 +136,200 @@ export class GalaSwapApi implements IGalaSwapApi {
       
       throw error;
     }
-
-    if (!response.ok) {
-      throw new GalaSwapErrorResponse(uri, response.status, await response.text());
-    }
-
-    return response.json() as unknown;
   }
 
   async getTokens(searchPrefix?: string) {
-    const path = searchPrefix ? `/v1/tokens?searchprefix=${searchPrefix}` : '/v1/tokens';
-    const tokenResponse = await this.retry(() => this.fetchJson(path, 'GET', false));
-    return tokenResponseSchema.parse(tokenResponse);
+    // Try v2 endpoint first (new structure), then fallback to v1
+    const pathsToTry = searchPrefix
+      ? [`/v2/tokens?searchprefix=${searchPrefix}`, `/v1/tokens?searchprefix=${searchPrefix}`]
+      : ['/v2/tokens', '/v1/tokens'];
+
+    for (const path of pathsToTry) {
+      try {
+        const tokenResponse = await this.retry(() => this.fetchJson(path, 'GET', false));
+        return tokenResponseSchema.parse(tokenResponse);
+      } catch (err) {
+        // If this is the last path to try, handle the error
+        if (path === pathsToTry[pathsToTry.length - 1]) {
+          if (err instanceof GalaSwapErrorResponse && err.status === 404) {
+            this.logger.warn({
+              message: `All token endpoints (${pathsToTry.join(', ')}) returned 404. Returning empty tokens list.`,
+              uri: err.uri,
+            });
+            return { tokens: [] };
+          }
+          throw err;
+        }
+        // Otherwise, continue to next path
+        if (err instanceof GalaSwapErrorResponse && err.status === 404) {
+          this.logger.warn({
+            message: `Token endpoint ${path} returned 404, trying next path.`,
+            uri: err.uri,
+          });
+          continue;
+        }
+        // Non-404 error, throw immediately
+        throw err;
+      }
+    }
+
+    // Should never reach here, but TypeScript needs it
+    return { tokens: [] };
   }
 
   async getRawBalances(walletAddress: string) {
-    const result = await this.retry(() =>
-      this.fetchJson(`/galachain/api/asset/token-contract/FetchBalances`, 'POST', false, {
-        body: { owner: walletAddress },
-      }),
-    );
+    // Try chaincode first (preferred method), fall back to REST API
+    if (this.galaChainRouter) {
+      try {
+        const balances = await this.galaChainRouter.getBalances(walletAddress);
+        if (balances.length > 0) {
+          this.logger.info(
+            { walletAddress, balanceCount: balances.length },
+            'Retrieved balances via GalaChain chaincode',
+          );
+          return balances;
+        }
+        // If chaincode returns empty, fall through to REST API
+        this.logger.warn(
+          { walletAddress },
+          'Chaincode returned empty balances, falling back to REST API',
+        );
+      } catch (error) {
+        this.logger.warn(
+          { error, walletAddress },
+          'Failed to get balances via chaincode, falling back to REST API',
+        );
+      }
+    }
 
-    const parsedResult = balanceResponseSchema.parse(result);
-    return parsedResult.Data;
+    // Fallback to REST API (deprecated endpoints)
+    // Updated 2025 path: /v1/token-contract/{METHOD}
+    // Try new endpoint first: FetchBalancesWithMetadata
+    try {
+      const result = await this.retry(() =>
+        this.fetchJson(`/v1/token-contract/FetchBalancesWithMetadata`, 'POST', false, {
+          body: { owner: walletAddress },
+        }),
+      );
+
+      const parsedResult = balanceResponseSchema.parse(result);
+      return parsedResult.Data;
+    } catch (err) {
+      // Fallback to old path structure for backward compatibility
+      if (err instanceof GalaSwapErrorResponse && err.status === 404) {
+        this.logger.warn({
+          message: 'New endpoint /v1/token-contract/FetchBalancesWithMetadata returned 404, trying old path structure.',
+          uri: err.uri,
+        });
+        try {
+          const result = await this.retry(() =>
+            this.fetchJson(`/galachain/api/asset/token-contract/FetchBalancesWithMetadata`, 'POST', false, {
+              body: { owner: walletAddress },
+            }),
+          );
+          const parsedResult = balanceResponseSchema.parse(result);
+          return parsedResult.Data;
+        } catch (fallbackErr) {
+          // Try deprecated endpoint as last resort
+          if (fallbackErr instanceof GalaSwapErrorResponse && fallbackErr.status === 404) {
+            try {
+              const result = await this.retry(() =>
+                this.fetchJson(`/galachain/api/asset/token-contract/FetchBalances`, 'POST', false, {
+                  body: { owner: walletAddress },
+                }),
+              );
+              const parsedResult = balanceResponseSchema.parse(result);
+              return parsedResult.Data;
+            } catch (finalErr) {
+              // All endpoints failed - return empty balances
+              if (finalErr instanceof GalaSwapErrorResponse && finalErr.status === 404) {
+                this.logger.warn({
+                  message: 'All balance endpoints returned 404. Returning empty balances.',
+                });
+                return [];
+              }
+              throw finalErr;
+            }
+          }
+          throw fallbackErr;
+        }
+      }
+      throw err;
+    }
   }
 
   async getAvailableSwaps(
     offeredTokenClass: Readonly<ITokenClassKey>,
     wantedTokenClass: Readonly<ITokenClassKey>,
   ) {
-    const result = await this.retry(() =>
-      this.fetchJson(`/v1/FetchAvailableTokenSwaps`, 'POST', false, {
-        body: { offeredTokenClass, wantedTokenClass },
-      }),
-    );
+    // Try chaincode first (preferred method), fall back to REST API
+    if (this.galaChainRouter) {
+      try {
+        const chaincodeSwaps = await this.galaChainRouter.getAvailableSwaps(offeredTokenClass, wantedTokenClass);
+        if (chaincodeSwaps.length > 0) {
+          // Convert chaincode format to IRawSwap format
+          const swaps: IRawSwap[] = chaincodeSwaps.map((swap) => ({
+            swapRequestId: swap.swapRequestId,
+            offered: swap.offered.map((o) => ({
+              quantity: o.quantity,
+              tokenInstance: {
+                ...o.tokenInstance,
+                instance: '0' as const,
+              },
+            })) as [Readonly<{ quantity: string; tokenInstance: Readonly<ITokenClassKey & { instance: '0' }> }>],
+            wanted: swap.wanted.map((w) => ({
+              quantity: w.quantity,
+              tokenInstance: {
+                ...w.tokenInstance,
+                instance: '0' as const,
+              },
+            })) as [Readonly<{ quantity: string; tokenInstance: Readonly<ITokenClassKey & { instance: '0' }> }>],
+            created: swap.created,
+            expires: swap.expires,
+            uses: swap.uses,
+            usesSpent: swap.usesSpent,
+            offeredBy: swap.offeredBy,
+          }));
+          this.logger.info(
+            { offeredTokenClass, wantedTokenClass, swapCount: swaps.length },
+            'Retrieved swaps via GalaChain chaincode',
+          );
+          return swaps;
+        }
+        // If chaincode returns empty, fall through to REST API
+        this.logger.warn(
+          { offeredTokenClass, wantedTokenClass },
+          'Chaincode returned empty swaps, falling back to REST API',
+        );
+      } catch (error) {
+        this.logger.warn(
+          { error, offeredTokenClass, wantedTokenClass },
+          'Failed to get swaps via chaincode, falling back to REST API',
+        );
+      }
+    }
 
-    const parsedResult = availableSwapsResponseSchema.parse(result);
-    return parsedResult.results;
+    // Fallback to REST API (deprecated endpoints)
+    try {
+      const result = await this.retry(() =>
+        this.fetchJson(`/v1/FetchAvailableTokenSwaps`, 'POST', false, {
+          body: { offeredTokenClass, wantedTokenClass },
+        }),
+      );
+
+      const parsedResult = availableSwapsResponseSchema.parse(result);
+      return parsedResult.results;
+    } catch (err) {
+      // Gracefully handle deprecated endpoint (404) - return empty swaps list
+      if (err instanceof GalaSwapErrorResponse && err.status === 404) {
+        this.logger.warn({
+          message: 'GalaSwap v1 endpoint /v1/FetchAvailableTokenSwaps returned 404. This endpoint is deprecated. Returning empty swaps list.',
+          uri: err.uri,
+        });
+        return [];
+      }
+      throw err;
+    }
   }
 
   async acceptSwap(swapRequestId: string, uses: string) {
@@ -207,35 +377,118 @@ export class GalaSwapApi implements IGalaSwapApi {
   }
 
   async getSwapsByWalletAddress(walletAddress: string) {
-    let nextPageBookMark: string | undefined = undefined;
-    const results: IRawSwap[] = [];
+    // Updated 2025 path: /v1/token-contract/{METHOD}
+    // Try new endpoint first: FetchTokenSwapsByUser with new path
+    try {
+      let nextPageBookMark: string | undefined = undefined;
+      const results: IRawSwap[] = [];
 
-    do {
-      const requestBody = { user: walletAddress, bookmark: nextPageBookMark };
+      do {
+        const requestBody: { user: string; bookmark?: string } = nextPageBookMark
+          ? { user: walletAddress, bookmark: nextPageBookMark }
+          : { user: walletAddress };
 
-      const result = await this.retry(() =>
-        this.fetchJson(
-          `/galachain/api/asset/token-contract/FetchTokenSwapsOfferedByUser`,
-          'POST',
-          false,
-          {
-            body: requestBody,
-          },
-        ),
-      );
+        const result: unknown = await this.retry(() =>
+          this.fetchJson(
+            `/v1/token-contract/FetchTokenSwapsByUser`,
+            'POST',
+            false,
+            {
+              body: requestBody,
+            },
+          ),
+        );
 
-      const parsedResult = swapsByUserResponseSchema.parse(result);
-      nextPageBookMark = parsedResult.Data.nextPageBookMark || undefined;
-      results.push(...parsedResult.Data.results);
-    } while (nextPageBookMark);
+        const parsedResult = swapsByUserResponseSchema.parse(result);
+        nextPageBookMark = parsedResult.Data.nextPageBookMark || undefined;
+        results.push(...parsedResult.Data.results);
+      } while (nextPageBookMark);
 
-    return results;
+      return results;
+    } catch (err) {
+      // Fallback to old path structure for backward compatibility
+      if (err instanceof GalaSwapErrorResponse && err.status === 404) {
+        this.logger.warn({
+          message: 'New endpoint /v1/token-contract/FetchTokenSwapsByUser returned 404, trying old path structure.',
+          uri: err.uri,
+        });
+        try {
+          let nextPageBookMark: string | undefined = undefined;
+          const results: IRawSwap[] = [];
+
+          do {
+            const requestBody: { user: string; bookmark?: string } = nextPageBookMark
+              ? { user: walletAddress, bookmark: nextPageBookMark }
+              : { user: walletAddress };
+
+            const result: unknown = await this.retry(() =>
+              this.fetchJson(
+                `/galachain/api/asset/token-contract/FetchTokenSwapsByUser`,
+                'POST',
+                false,
+                {
+                  body: requestBody,
+                },
+              ),
+            );
+
+            const parsedResult = swapsByUserResponseSchema.parse(result);
+            nextPageBookMark = parsedResult.Data.nextPageBookMark || undefined;
+            results.push(...parsedResult.Data.results);
+          } while (nextPageBookMark);
+
+          return results;
+        } catch (fallbackErr) {
+          // Try deprecated endpoint as last resort
+          if (fallbackErr instanceof GalaSwapErrorResponse && fallbackErr.status === 404) {
+            try {
+              let nextPageBookMark: string | undefined = undefined;
+              const results: IRawSwap[] = [];
+
+              do {
+                const requestBody: { user: string; bookmark?: string } = nextPageBookMark
+                  ? { user: walletAddress, bookmark: nextPageBookMark }
+                  : { user: walletAddress };
+
+                const result: unknown = await this.retry(() =>
+                  this.fetchJson(
+                    `/galachain/api/asset/token-contract/FetchTokenSwapsOfferedByUser`,
+                    'POST',
+                    false,
+                    {
+                      body: requestBody,
+                    },
+                  ),
+                );
+
+                const parsedResult = swapsByUserResponseSchema.parse(result);
+                nextPageBookMark = parsedResult.Data.nextPageBookMark || undefined;
+                results.push(...parsedResult.Data.results);
+              } while (nextPageBookMark);
+
+              return results;
+            } catch (finalErr) {
+              // All endpoints failed - return empty swaps list
+              if (finalErr instanceof GalaSwapErrorResponse && finalErr.status === 404) {
+                this.logger.warn({
+                  message: 'All swap endpoints returned 404. Returning empty swaps list.',
+                });
+                return [];
+              }
+              throw finalErr;
+            }
+          }
+          throw fallbackErr;
+        }
+      }
+      throw err;
+    }
   }
 
   private retry<TResponseType>(fn: () => Promise<TResponseType>) {
     return pRetry(fn, {
       retries: this.options.maxRetries ?? 5,
-      onFailedAttempt: async (err) => {
+      onFailedAttempt: async (err: unknown) => {
         this.logger.warn({
           message: 'GalaSwap API failed request',
           err,
@@ -243,12 +496,36 @@ export class GalaSwapApi implements IGalaSwapApi {
 
         await sleep(250);
       },
-      shouldRetry: async (err: Error) => {
+      shouldRetry: async (err: unknown): Promise<boolean> => {
+        // Don't retry on network/DNS errors - these are usually infrastructure issues
+        if (err instanceof Error) {
+          if (
+            err.message.includes('EAI_AGAIN') ||
+            err.message.includes('getaddrinfo') ||
+            err.message.includes('ECONNREFUSED') ||
+            err.message.includes('DNS resolution failed')
+          ) {
+            this.logger.error({
+              message: 'GalaSwap API network error - not retrying',
+              err: err.message,
+            });
+            return false;
+          }
+        }
+
+        // Don't retry on 404 errors - these indicate deprecated endpoints
+        if (err instanceof GalaSwapErrorResponse && err.status === 404) {
+          this.logger.warn({
+            message: 'GalaSwap API endpoint returned 404 (deprecated endpoint). Not retrying.',
+            uri: err.uri,
+          });
+          return false;
+        }
+
         if (
           err instanceof GalaSwapErrorResponse &&
           err.status < 500 &&
           err.status !== 400 &&
-          err.status !== 404 &&
           err.status !== 429
         ) {
           // Non-retriable error
@@ -262,6 +539,16 @@ export class GalaSwapApi implements IGalaSwapApi {
           });
 
           await sleep(10_000);
+        }
+
+        // Retry timeout errors (may be transient)
+        if (err instanceof Error && err.message.includes('timeout')) {
+          this.logger.warn({
+            message: 'GalaSwap API timeout - will retry',
+            err: err.message,
+          });
+          await sleep(2_000); // Wait longer before retrying timeouts
+          return true;
         }
 
         return true;

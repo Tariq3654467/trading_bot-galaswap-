@@ -406,80 +406,9 @@ export class GalaSwapApi implements IGalaSwapApi {
 
       return results;
     } catch (err) {
-      // Fallback to old path structure for backward compatibility
+      // If 404, return empty array immediately (silence log spam for deprecated endpoints)
       if (err instanceof GalaSwapErrorResponse && err.status === 404) {
-        this.logger.warn({
-          message: 'New endpoint /v1/token-contract/FetchTokenSwapsByUser returned 404, trying old path structure.',
-          uri: err.uri,
-        });
-        try {
-          let nextPageBookMark: string | undefined = undefined;
-          const results: IRawSwap[] = [];
-
-          do {
-            const requestBody: { user: string; bookmark?: string } = nextPageBookMark
-              ? { user: walletAddress, bookmark: nextPageBookMark }
-              : { user: walletAddress };
-
-            const result: unknown = await this.retry(() =>
-              this.fetchJson(
-                `/galachain/api/asset/token-contract/FetchTokenSwapsByUser`,
-                'POST',
-                false,
-                {
-                  body: requestBody,
-                },
-              ),
-            );
-
-            const parsedResult = swapsByUserResponseSchema.parse(result);
-            nextPageBookMark = parsedResult.Data.nextPageBookMark || undefined;
-            results.push(...parsedResult.Data.results);
-          } while (nextPageBookMark);
-
-          return results;
-        } catch (fallbackErr) {
-          // Try deprecated endpoint as last resort
-          if (fallbackErr instanceof GalaSwapErrorResponse && fallbackErr.status === 404) {
-            try {
-              let nextPageBookMark: string | undefined = undefined;
-              const results: IRawSwap[] = [];
-
-              do {
-                const requestBody: { user: string; bookmark?: string } = nextPageBookMark
-                  ? { user: walletAddress, bookmark: nextPageBookMark }
-                  : { user: walletAddress };
-
-                const result: unknown = await this.retry(() =>
-                  this.fetchJson(
-                    `/galachain/api/asset/token-contract/FetchTokenSwapsOfferedByUser`,
-                    'POST',
-                    false,
-                    {
-                      body: requestBody,
-                    },
-                  ),
-                );
-
-                const parsedResult = swapsByUserResponseSchema.parse(result);
-                nextPageBookMark = parsedResult.Data.nextPageBookMark || undefined;
-                results.push(...parsedResult.Data.results);
-              } while (nextPageBookMark);
-
-              return results;
-            } catch (finalErr) {
-              // All endpoints failed - return empty swaps list
-              if (finalErr instanceof GalaSwapErrorResponse && finalErr.status === 404) {
-                this.logger.warn({
-                  message: 'All swap endpoints returned 404. Returning empty swaps list.',
-                });
-                return [];
-              }
-              throw finalErr;
-            }
-          }
-          throw fallbackErr;
-        }
+        return [];
       }
       throw err;
     }

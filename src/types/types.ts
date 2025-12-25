@@ -5,6 +5,7 @@ export interface ILogger {
   info: ReturnType<typeof pino>['info'];
   error: ReturnType<typeof pino>['error'];
   warn: ReturnType<typeof pino>['warn'];
+  debug: ReturnType<typeof pino>['debug'];
 }
 
 export const tokenClassKeySchema = z

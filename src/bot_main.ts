@@ -19,6 +19,7 @@ import {
 } from './dependencies/status_reporters.js';
 import { BasicSwapAccepterStrategy } from './strategies/basic_swap_accepter/basic_swap_accepter_strategy.js';
 import { BasicSwapCreatorStrategy } from './strategies/basic_swap_creator/basic_swap_creator_strategy.js';
+import { BinanceTradingStrategy } from './strategies/binance_trading/binance_trading_strategy.js';
 import { mainLoop } from './tick_loop.js';
 import { defaultTokenConfig } from './token_config.js';
 import { ILogger } from './types/types.js';
@@ -26,7 +27,8 @@ import './utils/big_number_safety_extensions.js';
 
 const sleep = util.promisify(setTimeout);
 
-const strategiesToUse = [new BasicSwapAccepterStrategy(), new BasicSwapCreatorStrategy()];
+// BinanceTradingStrategy will be initialized after binanceTrading is set up
+let binanceTradingStrategy: BinanceTradingStrategy | null = null;
 
 async function main(logger: ILogger) {
   const configuration = new EnvironmentVariableConfigurationManager();
@@ -192,15 +194,27 @@ async function main(logger: ILogger) {
   }
 
   // Initialize Binance API if enabled
-  const binanceApi = binanceEnabled
-    ? new BinanceApi(binanceApiBaseUri, binanceApiKey, binanceApiSecret, fetch, logger)
-    : null;
+  let binanceApi: BinanceApi | null = null;
+  if (binanceEnabled) {
+    if (!binanceApiKey || !binanceApiSecret) {
+      logger.warn(
+        'BINANCE_ENABLED=true but BINANCE_API_KEY or BINANCE_API_SECRET not provided. Binance integration will be disabled.',
+      );
+    } else {
+      binanceApi = new BinanceApi(binanceApiBaseUri, binanceApiKey, binanceApiSecret, fetch, logger);
+      logger.info({
+        baseUri: binanceApiBaseUri,
+        hasApiKey: !!binanceApiKey,
+        hasApiSecret: !!binanceApiSecret,
+      }, 'Binance API enabled and initialized');
+    }
+  }
 
   // Initialize Binance Trading if enabled
   let binanceTrading: BinanceTrading | null = null;
   if (binanceApi && defaultTokenConfig.binance?.trading?.enabled) {
     if (!binanceApiKey || !binanceApiSecret) {
-      logger.warn('Binance trading is enabled but API key/secret not provided. Trading will be disabled.');
+      logger.warn('Binance trading is enabled in config but API key/secret not provided. Trading will be disabled.');
     } else {
       const tradingConfig: IBinanceTradingConfig = {
         enabled: defaultTokenConfig.binance.trading.enabled,
@@ -220,13 +234,47 @@ async function main(logger: ILogger) {
         }),
       };
       binanceTrading = new BinanceTrading(binanceApi, tradingConfig, logger);
-      logger.info('Binance trading enabled and initialized');
+      logger.info({
+        enabled: tradingConfig.enabled,
+        tradingPairs: tradingConfig.tradingPairs.length,
+        minTradeAmount: tradingConfig.minTradeAmount,
+        maxTradeAmount: tradingConfig.maxTradeAmount,
+      }, 'Binance trading enabled and initialized');
+
+      // Initialize BinanceTradingStrategy with trading pairs from config
+      const strategyConfig = {
+        enabled: tradingConfig.enabled,
+        defaultTradeAmount: 10, // Default $10 trades
+        tradingPairs: tradingConfig.tradingPairs.map((p) => {
+          const pair: { baseAsset: string; quoteAsset: string; symbol: string; tradeAmount: number; minNotional?: number } = {
+            baseAsset: p.baseAsset,
+            quoteAsset: p.quoteAsset,
+            symbol: p.symbol,
+            tradeAmount: 10, // $10 per pair (can be customized per pair in config)
+          };
+          if (p.minNotional !== undefined) {
+            pair.minNotional = p.minNotional;
+          }
+          return pair;
+        }),
+        maxTradesPerHour: 10, // Max 10 trades per hour per pair
+      };
+      binanceTradingStrategy = new BinanceTradingStrategy(strategyConfig);
+      logger.info({
+        tradingPairs: strategyConfig.tradingPairs.length,
+        pairs: strategyConfig.tradingPairs.map((p) => p.symbol),
+      }, 'BinanceTradingStrategy initialized with trading pairs');
     }
+  } else if (binanceApi && !defaultTokenConfig.binance?.trading?.enabled) {
+    logger.info('Binance API is available but trading is disabled in token_config.json');
   }
 
-  if (binanceApi) {
-    logger.info('Binance API enabled and initialized');
-  }
+  // Initialize strategies
+  const strategiesToUse = [
+    ...(binanceTradingStrategy ? [binanceTradingStrategy] : []),
+    new BasicSwapAccepterStrategy(),
+    new BasicSwapCreatorStrategy(),
+  ];
 
   let reporter: IStatusReporter = new ConsoleStatusReporter();
 

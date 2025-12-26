@@ -55,6 +55,9 @@ export class BinanceApi implements IBinanceApi {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly apiSecret?: string;
+  private timeOffset: number = 0; // Offset in milliseconds between local time and Binance server time
+  private lastTimeSync: number = 0; // Timestamp of last time sync
+  private readonly TIME_SYNC_INTERVAL = 300000; // Sync every 5 minutes
 
   constructor(
     baseUrl: string = 'https://api.binance.com',
@@ -90,6 +93,50 @@ export class BinanceApi implements IBinanceApi {
     return queryParams.toString();
   }
 
+  /**
+   * Get Binance server time and calculate time offset
+   * This helps prevent timestamp synchronization errors
+   */
+  private async syncServerTime(): Promise<void> {
+    const now = Date.now();
+    // Only sync if it's been more than 5 minutes since last sync
+    if (now - this.lastTimeSync < this.TIME_SYNC_INTERVAL) {
+      return;
+    }
+
+    try {
+      const response = await this.fetch(`${this.baseUrl}/api/v3/time`);
+      if (!response.ok) {
+        this.logger?.warn('Failed to sync Binance server time, using local time');
+        return;
+      }
+      const data = (await response.json()) as { serverTime: number };
+      const serverTime = data.serverTime;
+      const localTime = Date.now();
+      this.timeOffset = serverTime - localTime;
+      this.lastTimeSync = now;
+      this.logger?.info(
+        {
+          timeOffset: this.timeOffset,
+          serverTime,
+          localTime,
+        },
+        'Binance server time synced',
+      );
+    } catch (error) {
+      this.logger?.warn({ error }, 'Failed to sync Binance server time, using local time');
+      // On error, use a conservative offset of -1000ms to prevent "ahead of server" errors
+      this.timeOffset = -1000;
+    }
+  }
+
+  /**
+   * Get synchronized timestamp for Binance API requests
+   */
+  private getSyncedTimestamp(): number {
+    return Date.now() + this.timeOffset;
+  }
+
   private async fetchJson(
     path: string,
     options: {
@@ -104,13 +151,17 @@ export class BinanceApi implements IBinanceApi {
       'Content-Type': 'application/json',
     };
 
+    // For authenticated requests, sync server time and use synchronized timestamp
+    const requestParams = params ? { ...params } : {};
+    if (requiresAuth) {
+      // Sync server time before making authenticated requests
+      await this.syncServerTime();
+      requestParams.timestamp = this.getSyncedTimestamp();
+    }
+
     let queryString = '';
-    if (params) {
-      // Add timestamp for authenticated requests
-      if (requiresAuth) {
-        params.timestamp = Date.now();
-      }
-      queryString = this.buildQueryString(params);
+    if (Object.keys(requestParams).length > 0) {
+      queryString = this.buildQueryString(requestParams);
     }
 
     // Sign the request if authentication is required
@@ -118,11 +169,18 @@ export class BinanceApi implements IBinanceApi {
       if (!this.apiKey) {
         throw new Error('API key is required for authenticated requests');
       }
+      if (!this.apiSecret) {
+        throw new Error('API secret is required for authenticated requests');
+      }
       headers['X-MBX-APIKEY'] = this.apiKey;
 
+      // Binance requires signature even if query string only has timestamp
       if (queryString) {
         const signature = this.signRequest(queryString);
         queryString += `&signature=${signature}`;
+      } else {
+        // This shouldn't happen, but handle edge case
+        throw new Error('Query string is required for authenticated requests');
       }
     }
 

@@ -14,10 +14,10 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 0.95,
-      "minProfitability": 0.90,
-      "maxProfitability": 1.50,
-      "targetGivingSize": 1,
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 25,
       "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     },
@@ -34,10 +34,10 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 0.95,
-      "minProfitability": 0.90,
-      "maxProfitability": 1.50,
-      "targetGivingSize": 100,
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 25,
       "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     },
@@ -54,10 +54,10 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 0.95,
-      "minProfitability": 0.90,
-      "maxProfitability": 1.50,
-      "targetGivingSize": 1,
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 25,
       "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     },
@@ -74,10 +74,170 @@
         "type": "none",
         "additionalKey": "none"
       },
-      "targetProfitability": 0.95,
-      "minProfitability": 0.90,
-      "maxProfitability": 1.50,
-      "targetGivingSize": 100,
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 9000,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GALA",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 0.01,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GALA",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 8000,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 25,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 25,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 0.03,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 25,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 0.03,
+      "maxPriceMovementPercent": 1.0,
+      "maxPriceMovementWindowMs": 1800000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "targetProfitability": 1.0005,
+      "minProfitability": 1.0001,
+      "maxProfitability": 1.20,
+      "targetGivingSize": 25,
       "maxPriceMovementPercent": 1.0,
       "maxPriceMovementWindowMs": 1800000
     }
@@ -103,6 +263,13 @@
       "type": "none",
       "additionalKey": "none",
       "decimalPlaces": 2
+    },
+    {
+      "collection": "GWETH",
+      "category": "Unit",
+      "type": "none",
+      "additionalKey": "none",
+      "decimalPlaces": 4
     }
   ],
   "creationLimits": [
@@ -120,7 +287,7 @@
         "additionalKey": "none"
       },
       "resetIntervalMs": 43200000,
-      "giveLimitPerReset": 20
+      "giveLimitPerReset": 500
     },
     {
       "givingTokenClass": {
@@ -136,7 +303,7 @@
         "additionalKey": "none"
       },
       "resetIntervalMs": 43200000,
-      "giveLimitPerReset": 200
+      "giveLimitPerReset": 500
     },
     {
       "givingTokenClass": {
@@ -152,7 +319,7 @@
         "additionalKey": "none"
       },
       "resetIntervalMs": 43200000,
-      "giveLimitPerReset": 20
+      "giveLimitPerReset": 500
     },
     {
       "givingTokenClass": {
@@ -168,7 +335,135 @@
         "additionalKey": "none"
       },
       "resetIntervalMs": 43200000,
-      "giveLimitPerReset": 200
+      "giveLimitPerReset": 100000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GALA",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 25
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GALA",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 50000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 500
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 1000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 25
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDC",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 1000
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 25
+    },
+    {
+      "givingTokenClass": {
+        "collection": "GUSDT",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "receivingTokenClass": {
+        "collection": "GWETH",
+        "category": "Unit",
+        "type": "none",
+        "additionalKey": "none"
+      },
+      "resetIntervalMs": 43200000,
+      "giveLimitPerReset": 1000
     }
   ]
 }

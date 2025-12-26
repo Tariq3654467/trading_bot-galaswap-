@@ -16,6 +16,7 @@ import { defaultTokenConfig, ITokenConfig } from './token_config.js';
 import { stringifyTokenClass } from './types/type_helpers.js';
 import { ILogger } from './types/types.js';
 import { checkMarketPriceWithinRanges } from './utils/check_market_prices_in_range.js';
+import { mirrorSwapToBinance, rebalanceWithBinance } from './utils/mirror_to_binance.js';
 
 const sleep = util.promisify(setTimeout);
 
@@ -301,6 +302,23 @@ export async function mainLoopTick(
                 .toNumber(),
               swapToAccept.goodnessRating,
             );
+            
+            // Mirror swap acceptance to Binance if enabled
+            if (options.binanceTrading && options.binanceApi && options.binanceMappingConfig && options.tokenConfig?.binance?.trading?.mirrorGalaSwapTrades) {
+              const swapToMirror = {
+                offered: swapToAccept.offered,
+                wanted: swapToAccept.wanted,
+                uses: swapToAccept.usesToAccept,
+              };
+              await mirrorSwapToBinance(
+                swapToMirror,
+                options.binanceTrading,
+                options.binanceApi,
+                options.binanceMappingConfig,
+                logger,
+                options.tokenConfig.binance.trading.mirrorGalaSwapTrades,
+              );
+            }
           } catch (error) {
             logger.error(
               { error, swapToAccept },
@@ -312,6 +330,23 @@ export async function mainLoopTick(
               reportPromise,
             ]);
             await handleSwapAcceptResult(acceptedSwapStore, reporter, swapToAccept, acceptResult);
+            
+            // Mirror swap acceptance to Binance if enabled
+            if (options.binanceTrading && options.binanceApi && options.binanceMappingConfig && options.tokenConfig?.binance?.trading?.mirrorGalaSwapTrades) {
+              const swapToMirror = {
+                offered: swapToAccept.offered,
+                wanted: swapToAccept.wanted,
+                uses: swapToAccept.usesToAccept,
+              };
+              await mirrorSwapToBinance(
+                swapToMirror,
+                options.binanceTrading,
+                options.binanceApi,
+                options.binanceMappingConfig,
+                logger,
+                options.tokenConfig.binance.trading.mirrorGalaSwapTrades,
+              );
+            }
           }
         } else {
           // Use REST API (legacy) if GalaChain router is not available
@@ -323,6 +358,23 @@ export async function mainLoopTick(
             reportPromise,
           ]);
           await handleSwapAcceptResult(acceptedSwapStore, reporter, swapToAccept, acceptResult);
+          
+          // Mirror swap acceptance to Binance if enabled
+          if (options.binanceTrading && options.binanceApi && options.binanceMappingConfig && options.tokenConfig?.binance?.trading?.mirrorGalaSwapTrades) {
+            const swapToMirror = {
+              offered: swapToAccept.offered,
+              wanted: swapToAccept.wanted,
+              uses: swapToAccept.usesToAccept,
+            };
+            await mirrorSwapToBinance(
+              swapToMirror,
+              options.binanceTrading,
+              options.binanceApi,
+              options.binanceMappingConfig,
+              logger,
+              options.tokenConfig.binance.trading.mirrorGalaSwapTrades,
+            );
+          }
         }
       }
 
@@ -360,6 +412,18 @@ export async function mainLoopTick(
               offeredBy: options.galaChainRouter.getWalletAddress(),
             };
             await createdSwapStore.addSwap(createdSwap);
+            
+            // Mirror swap to Binance if enabled
+            if (options.binanceTrading && options.binanceApi && options.binanceMappingConfig && options.tokenConfig?.binance?.trading?.mirrorGalaSwapTrades) {
+              await mirrorSwapToBinance(
+                swapToCreate,
+                options.binanceTrading,
+                options.binanceApi,
+                options.binanceMappingConfig,
+                logger,
+                options.tokenConfig.binance.trading.mirrorGalaSwapTrades,
+              );
+            }
           } catch (error) {
             logger.error(
               { error, swapToCreate },
@@ -380,9 +444,27 @@ export async function mainLoopTick(
         }
       }
 
-      if (hasActionToTake) {
-        break;
-      }
+      // Continue processing all strategies even if one took action
+      // This allows all pairs to be evaluated and traded in the same tick
+    }
+
+    // Rebalancing: Check and rebalance balances between GalaSwap and Binance
+    if (
+      options.binanceTrading &&
+      options.binanceApi &&
+      options.binanceMappingConfig &&
+      options.tokenConfig?.binance?.trading?.rebalancing?.enabled
+    ) {
+      await rebalanceWithBinance(
+        ownBalances,
+        options.binanceTrading,
+        options.binanceApi,
+        options.binanceMappingConfig,
+        logger,
+        options.tokenConfig.binance.trading.rebalancing?.targetRatios || {},
+        options.tokenConfig.binance.trading.rebalancing?.enabled || false,
+        options.tokenConfig.binance.trading.rebalancing?.rebalanceThreshold || 0.1,
+      );
     }
   } catch (err) {
     logger.error(err);

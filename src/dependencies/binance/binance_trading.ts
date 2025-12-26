@@ -106,17 +106,19 @@ export class BinanceTrading {
     if (trade.type === 'MARKET') {
       if (trade.side === 'BUY') {
         // For market buy, use quoteOrderQty (amount in quote currency)
-        orderParams.quoteOrderQty = trade.quantity;
+        // Format quoteOrderQty to proper precision (usually 2-8 decimal places for USDT)
+        orderParams.quoteOrderQty = this.formatQuantity(trade.quantity, 8);
       } else {
         // For market sell, use quantity (amount in base currency)
-        orderParams.quantity = trade.quantity;
+        // Format quantity based on symbol's stepSize
+        orderParams.quantity = this.formatQuantityForSymbol(trade.quantity, trade.symbol);
       }
     } else if (trade.type === 'LIMIT') {
       if (!trade.price) {
         throw new Error('Price is required for limit orders');
       }
-      orderParams.quantity = trade.quantity;
-      orderParams.price = trade.price;
+      orderParams.quantity = this.formatQuantityForSymbol(trade.quantity, trade.symbol);
+      orderParams.price = this.formatPrice(trade.price, trade.symbol);
       orderParams.timeInForce = trade.timeInForce || 'GTC';
     }
 
@@ -190,6 +192,66 @@ export class BinanceTrading {
     // Extract quote asset from symbol (e.g., "USDT" from "GALAUSDT")
     const pair = this.config.tradingPairs.find((p) => p.symbol === symbol);
     return pair?.quoteAsset || 'USDT';
+  }
+
+  /**
+   * Format quantity to proper precision based on symbol's stepSize
+   * Common stepSizes: 1 (whole numbers), 0.1, 0.01, 0.001, etc.
+   */
+  private formatQuantityForSymbol(quantity: string, symbol: string): string {
+    const qty = BigNumber(quantity);
+    
+    // Common stepSize values for popular pairs (fallback if exchange info not available)
+    const stepSizeMap: Record<string, number> = {
+      'GALAUSDT': 1,      // Whole numbers only
+      'BTCUSDT': 0.00001, // 5 decimal places
+      'ETHUSDT': 0.0001,  // 4 decimal places
+      'BNBUSDT': 0.001,   // 3 decimal places
+      'SOLUSDT': 0.01,    // 2 decimal places
+      'ADAUSDT': 1,       // Whole numbers
+      'DOGEUSDT': 1,      // Whole numbers
+      'XRPUSDT': 1,       // Whole numbers
+    };
+
+    const stepSize = stepSizeMap[symbol] || 1; // Default to whole numbers if unknown
+    
+    // Calculate number of decimal places from stepSize
+    const decimals = stepSize >= 1 ? 0 : Math.abs(Math.log10(stepSize));
+    
+    // Round down to nearest stepSize
+    const rounded = BigNumber(Math.floor(qty.dividedBy(stepSize).toNumber())).multipliedBy(stepSize);
+    
+    return this.formatQuantity(rounded.toString(), decimals);
+  }
+
+  /**
+   * Format quantity to specified decimal places (rounds down)
+   */
+  private formatQuantity(quantity: string, decimals: number): string {
+    const qty = BigNumber(quantity);
+    return qty.toFixed(decimals, BigNumber.ROUND_DOWN);
+  }
+
+  /**
+   * Format price to proper precision (usually 2-8 decimal places)
+   */
+  private formatPrice(price: string, symbol: string): string {
+    const priceNum = BigNumber(price);
+    
+    // Common price precision for popular pairs
+    const pricePrecisionMap: Record<string, number> = {
+      'GALAUSDT': 8,      // 8 decimal places
+      'BTCUSDT': 2,       // 2 decimal places
+      'ETHUSDT': 2,       // 2 decimal places
+      'BNBUSDT': 2,       // 2 decimal places
+      'SOLUSDT': 4,       // 4 decimal places
+      'ADAUSDT': 6,       // 6 decimal places
+      'DOGEUSDT': 8,      // 8 decimal places
+      'XRPUSDT': 4,       // 4 decimal places
+    };
+
+    const precision = pricePrecisionMap[symbol] || 8; // Default to 8 if unknown
+    return priceNum.toFixed(precision, BigNumber.ROUND_DOWN);
   }
 }
 

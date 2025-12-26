@@ -2,7 +2,7 @@ import assert from 'assert';
 import BigNumber from 'bignumber.js';
 import { IGalaSwapToken, IRawSwap, ITokenBalance } from '../../dependencies/galaswap/types.js';
 import { IStatusReporter } from '../../dependencies/status_reporters.js';
-import { areSameTokenClass, stringifyTokenClass } from '../../types/type_helpers.js';
+import { areSameTokenClass } from '../../types/type_helpers.js';
 import { ILogger, ITokenClassKey } from '../../types/types.js';
 import { galaChainObjectIsExpired, getUseableBalances } from '../../utils/galachain_utils.js';
 import { getCurrentMarketRate } from '../../utils/get_current_market_rate.js';
@@ -48,6 +48,8 @@ export async function getSwapsToCreate(
     ...b,
     quantity: b.collection === 'GALA' ? BigNumber(b.quantity).minus(1).toString() : b.quantity,
   }));
+
+  const swapsToCreate: Array<Pick<IRawSwap, 'offered' | 'wanted' | 'uses'>> = [];
 
   for (const target of config.targetActiveSwaps) {
     logger.info(
@@ -133,13 +135,13 @@ export async function getSwapsToCreate(
     const requiredBalance = target.targetGivingSize;
     
     if (availableBalance < requiredBalance) {
-      logger.debug({
-        message: 'Ignoring target, insufficient balance to create',
-        target,
+      logger.info({
+        message: 'Skipping target, insufficient balance to create',
+        givingTokenClass: target.givingTokenClass,
+        receivingTokenClass: target.receivingTokenClass,
         availableBalance,
         requiredBalance,
         balanceDifference: availableBalance - requiredBalance,
-        givingTokenClass: stringifyTokenClass(target.givingTokenClass),
       });
 
       continue;
@@ -384,12 +386,100 @@ export async function getSwapsToCreate(
       );
     }
 
-    const newSwapConfig = calculateSwapQuantitiesAndUses(
+    // Set minimum thresholds based on token type BEFORE calculating swap
+    // This ensures we calculate with proper minimums in mind
+    let minGivingThreshold: BigNumber;
+    let minReceivingThreshold: BigNumber;
+    
+    if (target.givingTokenClass.collection === 'GALA') {
+      minGivingThreshold = BigNumber(0.0001); // Minimum 0.0001 GALA per use
+    } else if (target.givingTokenClass.collection === 'GWETH') {
+      // GWETH minimum increased - 0.0001 was still causing CONFLICT errors
+      // The DEX requires larger amounts for GWETH swaps
+      minGivingThreshold = BigNumber(0.001); // Minimum 0.001 GWETH per use (100x higher than original)
+    } else {
+      // Stablecoins (GUSDC/GUSDT) need higher minimum to avoid pool rejection
+      minGivingThreshold = BigNumber(0.01); // Minimum 0.01 for stablecoins
+    }
+    
+    if (target.receivingTokenClass.collection === 'GALA') {
+      minReceivingThreshold = BigNumber(0.0001); // Minimum 0.0001 GALA per use
+    } else if (target.receivingTokenClass.collection === 'GWETH') {
+      // GWETH minimum increased - 0.0001 was still causing CONFLICT errors
+      // The DEX requires larger amounts for GWETH swaps
+      minReceivingThreshold = BigNumber(0.001); // Minimum 0.001 GWETH per use (100x higher than original)
+    } else {
+      // Stablecoins (GUSDC/GUSDT) need higher minimum - 0.000003 is too small and causes CONFLICT
+      minReceivingThreshold = BigNumber(0.01); // Minimum 0.01 for stablecoins (0.000003 will be rejected)
+    }
+
+    // Calculate maximum uses to ensure per-use amounts meet minimums
+    // This prevents GCD from creating too many uses with tiny per-use amounts
+    const maxUsesFromGiving = amountToGive.dividedBy(minGivingThreshold).integerValue(BigNumber.ROUND_FLOOR);
+    const maxUsesFromReceiving = BigNumber(totalQuantityToReceive).dividedBy(minReceivingThreshold).integerValue(BigNumber.ROUND_FLOOR);
+    const maxUses = BigNumber.min(maxUsesFromGiving, maxUsesFromReceiving);
+    
+    // Calculate swap quantities with GCD first
+    let newSwapConfig = calculateSwapQuantitiesAndUses(
       decimalsForGivingToken,
       decimalsForReceivingToken,
       amountToGive,
       BigNumber(totalQuantityToReceive),
     );
+    
+    // If GCD created too many uses (making per-use amounts too small), limit uses
+    const calculatedUses = BigNumber(newSwapConfig.uses);
+    if (calculatedUses.isGreaterThan(maxUses) && maxUses.isGreaterThan(0)) {
+      // Recalculate with limited uses to ensure per-use amounts meet minimums
+      const limitedGivingPerUse = amountToGive.dividedBy(maxUses);
+      const limitedReceivingPerUse = BigNumber(totalQuantityToReceive).dividedBy(maxUses);
+      
+      // Ensure per-use amounts are at least the minimum thresholds
+      const givingPerUseAdjusted = BigNumber.max(limitedGivingPerUse, minGivingThreshold);
+      const receivingPerUseAdjusted = BigNumber.max(limitedReceivingPerUse, minReceivingThreshold);
+      
+      // Round to appropriate decimals (round up to ensure we meet minimums)
+      const givingPerUseRounded = givingPerUseAdjusted.toFixed(decimalsForGivingToken, BigNumber.ROUND_CEIL);
+      const receivingPerUseRounded = receivingPerUseAdjusted.toFixed(decimalsForReceivingToken, BigNumber.ROUND_CEIL);
+      
+      // Recalculate total to match rounded per-use amounts
+      const adjustedGivingTotal = BigNumber(givingPerUseRounded).multipliedBy(maxUses);
+      const adjustedReceivingTotal = BigNumber(receivingPerUseRounded).multipliedBy(maxUses);
+      
+      // Recalculate with adjusted amounts
+      newSwapConfig = calculateSwapQuantitiesAndUses(
+        decimalsForGivingToken,
+        decimalsForReceivingToken,
+        adjustedGivingTotal,
+        adjustedReceivingTotal,
+      );
+      
+      // After GCD recalculation, verify per-use amounts still meet minimums
+      // If GCD reduced them below minimums, use the limited amounts directly
+      const finalGivingPerUse = BigNumber(newSwapConfig.givingQuantity);
+      const finalReceivingPerUse = BigNumber(newSwapConfig.receivingQuantity);
+      
+      if (finalGivingPerUse.isLessThan(minGivingThreshold) || finalReceivingPerUse.isLessThan(minReceivingThreshold)) {
+        // GCD reduced amounts below minimums, use limited amounts directly
+        newSwapConfig = {
+          uses: maxUses.toString(),
+          givingQuantity: givingPerUseRounded,
+          receivingQuantity: receivingPerUseRounded,
+        };
+      }
+      
+      logger.info(
+        {
+          givingTokenClass: target.givingTokenClass,
+          receivingTokenClass: target.receivingTokenClass,
+          originalUses: calculatedUses.toString(),
+          limitedUses: maxUses.toString(),
+          givingPerUse: newSwapConfig.givingQuantity,
+          receivingPerUse: newSwapConfig.receivingQuantity,
+        },
+        'Limited uses to ensure per-use amounts meet minimums',
+      );
+    }
 
     const newSwap = {
       uses: newSwapConfig.uses,
@@ -413,8 +503,90 @@ export async function getSwapsToCreate(
       ],
     } satisfies Pick<IRawSwap, 'offered' | 'wanted' | 'uses'>;
 
-    return [newSwap];
+    // Validate minimum swap sizes to prevent CONFLICT errors
+    // Check both per-use quantities and total value
+    const minGivingQuantity = BigNumber(newSwapConfig.givingQuantity);
+    const minReceivingQuantity = BigNumber(newSwapConfig.receivingQuantity);
+    const totalGivingValue = minGivingQuantity.multipliedBy(newSwapConfig.uses);
+    const totalReceivingValue = minReceivingQuantity.multipliedBy(newSwapConfig.uses);
+    
+    // Skip if per-use quantities are too small
+    // Even if total is large, per-use amounts must meet minimum thresholds to avoid CONFLICT errors
+    // The pool rejects swaps with extremely small per-use amounts (like 0.000001 GUSDT) even if total is acceptable
+    
+    // For stablecoins, we need a minimum per-use amount - STRICT REQUIREMENT
+    // 0.000001 GUSDT per use causes CONFLICT, pool requires at least 0.01 per use
+    const isStablecoinReceiving = target.receivingTokenClass.collection === 'GUSDC' || target.receivingTokenClass.collection === 'GUSDT';
+    const isStablecoinGiving = target.givingTokenClass.collection === 'GUSDC' || target.givingTokenClass.collection === 'GUSDT';
+    const minStablecoinPerUse = BigNumber(0.01); // Minimum 0.01 stablecoin per use to avoid CONFLICT
+    const isStablecoinPerUseTooSmall = isStablecoinReceiving && minReceivingQuantity.isLessThan(minStablecoinPerUse);
+    const isStablecoinGivingTooSmall = isStablecoinGiving && minGivingQuantity.isLessThan(minStablecoinPerUse);
+    
+    // Check base token minimums
+    const isGivingTooSmall = minGivingQuantity.isLessThan(minGivingThreshold);
+    const isReceivingTooSmall = minReceivingQuantity.isLessThan(minReceivingThreshold);
+    
+    // For non-stablecoin pairs, be more lenient with per-use amounts if total is reasonable
+    // But still enforce minimum thresholds for base tokens
+    const isNonStablecoinPair = !isStablecoinGiving && !isStablecoinReceiving;
+    const isTotalReasonable = totalGivingValue.isGreaterThanOrEqualTo(25) && totalReceivingValue.isGreaterThanOrEqualTo(0.5);
+    
+    // Additional check: reject extremely small amounts that will definitely cause CONFLICT
+    // Even for base tokens, if per-use amount is extremely small (< 0.0001 for GALA, < 0.00001 for GWETH), reject
+    const isExtremelySmallGiving = minGivingQuantity.isLessThan(minGivingThreshold.multipliedBy(0.1)); // 10% of minimum
+    const isExtremelySmallReceiving = minReceivingQuantity.isLessThan(minReceivingThreshold.multipliedBy(0.1)); // 10% of minimum
+    
+    // STRICT VALIDATION: Reject if:
+    // 1. ANY stablecoin per-use amount is below 0.01 (regardless of total size) - STRICT
+    // 2. Base token per-use amounts are extremely small (< 10% of minimum threshold) - STRICT
+    // 3. Base token per-use amounts are too small AND total is not reasonable
+    // This prevents CONFLICT errors from extremely small per-use amounts
+    const shouldSkip = 
+      isStablecoinPerUseTooSmall || // Reject if receiving stablecoin per-use is too small (STRICT - no exceptions)
+      isStablecoinGivingTooSmall || // Reject if giving stablecoin per-use is too small (STRICT - no exceptions)
+      isExtremelySmallGiving || // Reject if giving amount is extremely small (STRICT - no exceptions)
+      isExtremelySmallReceiving || // Reject if receiving amount is extremely small (STRICT - no exceptions)
+      (isGivingTooSmall && !isTotalReasonable) || // Reject if base token giving is too small and total not reasonable
+      (isReceivingTooSmall && !isTotalReasonable); // Reject if base token receiving is too small and total not reasonable
+    
+    if (shouldSkip) {
+      logger.warn(
+        {
+          givingTokenClass: target.givingTokenClass,
+          receivingTokenClass: target.receivingTokenClass,
+          givingQuantity: newSwapConfig.givingQuantity,
+          receivingQuantity: newSwapConfig.receivingQuantity,
+          uses: newSwapConfig.uses,
+          totalGivingValue: totalGivingValue.toString(),
+          totalReceivingValue: totalReceivingValue.toString(),
+          minGivingThreshold: minGivingThreshold.toString(),
+          minReceivingThreshold: minReceivingThreshold.toString(),
+          isStablecoinPair: isStablecoinGiving && isStablecoinReceiving,
+        },
+        'Skipping swap creation: per-use quantities too small for stablecoin pairs (would cause CONFLICT error).',
+      );
+      continue;
+    }
+
+    swapsToCreate.push(newSwap);
+    logger.info(
+      {
+        givingTokenClass: target.givingTokenClass,
+        receivingTokenClass: target.receivingTokenClass,
+        swapAdded: true,
+        totalSwapsToCreate: swapsToCreate.length,
+      },
+      'Swap added to creation list, continuing to process other pairs',
+    );
   }
 
-  return [];
+  logger.info(
+    {
+      totalSwapsToCreate: swapsToCreate.length,
+      totalTargets: config.targetActiveSwaps.length,
+    },
+    'Finished processing all swap targets',
+  );
+
+  return swapsToCreate;
 }

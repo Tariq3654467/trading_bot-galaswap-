@@ -6,7 +6,7 @@ const creationLimitsSchema = z.object({
   givingTokenClass: tokenClassKeySchema,
   receivingTokenClass: tokenClassKeySchema,
   resetIntervalMs: z.number().int().positive(),
-  giveLimitPerReset: z.number().int().positive(),
+  giveLimitPerReset: z.number().positive(), // Allow floats for tokens like GWETH (0.5 ETH)
 });
 
 export type IMaxNewQuantityCreatedLimit = z.infer<typeof creationLimitsSchema>;
@@ -18,7 +18,7 @@ const targetActiveSwapsSchema = z
     targetProfitability: z.number().positive(),
     minProfitability: z.number().positive(),
     maxProfitability: z.number().positive(),
-    targetGivingSize: z.number().int().positive(),
+    targetGivingSize: z.number().positive(), // Allow floats for tokens like GWETH (0.01 ETH)
     maxPriceMovementPercent: z.number().positive(),
     maxPriceMovementWindowMs: z.number().positive(),
     maxReceivingTokenPriceUSD: z.number().positive().optional(),

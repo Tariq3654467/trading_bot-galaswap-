@@ -15,7 +15,7 @@
     }
   ],
   "binance": {
-    "enabled": false,
+    "enabled": true,
     "mappings": [
       {
         "galaToken": {
@@ -26,6 +26,16 @@
         },
         "binanceSymbol": "GALAUSDT",
         "quoteCurrency": "USDT"
+      },
+      {
+        "galaToken": {
+          "collection": "GWETH",
+          "category": "Unit",
+          "type": "none",
+          "additionalKey": "none"
+        },
+        "binanceSymbol": "ETHUSDT",
+        "quoteCurrency": "USDT"
       }
     ],
     "defaultQuoteCurrency": "USDT",
@@ -33,15 +43,73 @@
     "galaswapWeight": 0.5,
     "binanceWeight": 0.5,
     "trading": {
-      "enabled": false,
+      "enabled": true,
       "minTradeAmount": 10,
       "maxTradeAmount": 10000,
       "defaultOrderType": "MARKET",
+      "mirrorGalaSwapTrades": true,
+      "rebalancing": {
+        "enabled": true,
+        "rebalanceThreshold": 0.1,
+        "targetRatios": {
+          "GALA": 0.5,
+          "USDT": 0.3
+        }
+      },
       "tradingPairs": [
         {
           "baseAsset": "GALA",
           "quoteAsset": "USDT",
           "symbol": "GALAUSDT",
+          "minNotional": 10
+        },
+        {
+          "baseAsset": "BTC",
+          "quoteAsset": "USDT",
+          "symbol": "BTCUSDT",
+          "minNotional": 10
+        },
+        {
+          "baseAsset": "ETH",
+          "quoteAsset": "USDT",
+          "symbol": "ETHUSDT",
+          "minNotional": 10
+        },
+        {
+          "baseAsset":"GALA",
+          "quoteAsset": "ETH",
+          "symbol":"GALAETH",
+          "minNotional":10
+
+        },
+        {
+          "baseAsset": "BNB",
+          "quoteAsset": "USDT",
+          "symbol": "BNBUSDT",
+          "minNotional": 10
+        },
+        {
+          "baseAsset": "SOL",
+          "quoteAsset": "USDT",
+          "symbol": "SOLUSDT",
+          "minNotional": 10
+        },
+        {
+          "baseAsset": "ADA",
+          "quoteAsset": "USDT",
+          "symbol": "ADAUSDT",
+          "minNotional": 10
+        },
+        {
+          "baseAsset": "DOGE",
+          "quoteAsset": "USDT",
+          "symbol": "DOGEUSDT",
+          "minNotional": 10
+        },
+        {
+          "baseAsset": "XRP",
+          "quoteAsset": "USDT",
+          "symbol": "XRPUSDT",
           "minNotional": 10
         }
       ]

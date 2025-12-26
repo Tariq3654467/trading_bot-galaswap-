@@ -55,6 +55,15 @@ const tokenConfigSchema = z
             minTradeAmount: z.number().default(10),
             maxTradeAmount: z.number().default(10000),
             defaultOrderType: z.enum(['MARKET', 'LIMIT']).default('MARKET'),
+            mirrorGalaSwapTrades: z.boolean().default(false),
+            rebalancing: z
+              .object({
+                enabled: z.boolean().default(false),
+                rebalanceThreshold: z.number().default(0.1),
+                targetRatios: z.record(z.string(), z.number()).default({}),
+              })
+              .readonly()
+              .optional(),
             tradingPairs: z
               .array(
                 z

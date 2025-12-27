@@ -78,8 +78,8 @@ export const binanceOrderSchema = z
     side: z.enum(['BUY', 'SELL']),
     stopPrice: z.string().optional(),
     icebergQty: z.string().optional(),
-    time: z.number(),
-    updateTime: z.number(),
+    time: z.number(), // Normalized in placeOrder method if missing
+    updateTime: z.number(), // Normalized in placeOrder method if missing
     isWorking: z.boolean().optional(),
     origQuoteOrderQty: z.string().optional(),
   })

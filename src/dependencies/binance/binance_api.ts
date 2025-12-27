@@ -306,6 +306,19 @@ export class BinanceApi implements IBinanceApi {
 
   // Trading endpoints (authenticated)
 
+  /**
+   * Normalize Binance order response to ensure required fields are present
+   * Binance may return 'transactTime' instead of 'time' and may omit 'updateTime'
+   */
+  private normalizeOrderResponse(result: unknown): unknown {
+    const order = result as { time?: number; transactTime?: number; updateTime?: number };
+    return {
+      ...order,
+      time: order.time ?? order.transactTime ?? Date.now(),
+      updateTime: order.updateTime ?? order.transactTime ?? Date.now(),
+    };
+  }
+
   async getAccountInfo(): Promise<IBinanceAccountInfo> {
     if (!this.apiKey || !this.apiSecret) {
       throw new Error('API key and secret are required for account info');
@@ -380,7 +393,7 @@ export class BinanceApi implements IBinanceApi {
       }),
     );
 
-    return binanceOrderSchema.parse(result);
+    return binanceOrderSchema.parse(this.normalizeOrderResponse(result));
   }
 
   async cancelOrder(
@@ -413,7 +426,7 @@ export class BinanceApi implements IBinanceApi {
       }),
     );
 
-    return binanceOrderSchema.parse(result);
+    return binanceOrderSchema.parse(this.normalizeOrderResponse(result));
   }
 
   async getOrder(
@@ -446,7 +459,7 @@ export class BinanceApi implements IBinanceApi {
       }),
     );
 
-    return binanceOrderSchema.parse(result);
+    return binanceOrderSchema.parse(this.normalizeOrderResponse(result));
   }
 
   async getAllOrders(symbol: string, limit: number = 500): Promise<readonly IBinanceOrder[]> {

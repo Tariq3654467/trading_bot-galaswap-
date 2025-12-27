@@ -43,7 +43,7 @@
     "galaswapWeight": 0.5,
     "binanceWeight": 0.5,
     "trading": {
-      "enabled": true,
+      "enabled": false,
       "minTradeAmount": 10,
       "maxTradeAmount": 10000,
       "defaultOrderType": "MARKET",

@@ -20,6 +20,7 @@ import {
 import { BasicSwapAccepterStrategy } from './strategies/basic_swap_accepter/basic_swap_accepter_strategy.js';
 import { BasicSwapCreatorStrategy } from './strategies/basic_swap_creator/basic_swap_creator_strategy.js';
 import { BinanceTradingStrategy } from './strategies/binance_trading/binance_trading_strategy.js';
+import { ArbitrageStrategy } from './strategies/arbitrage/arbitrage_strategy.js';
 import { mainLoop } from './tick_loop.js';
 import { defaultTokenConfig } from './token_config.js';
 import { ILogger } from './types/types.js';
@@ -210,38 +211,40 @@ async function main(logger: ILogger) {
     }
   }
 
-  // Initialize Binance Trading if enabled
+  // Initialize Binance Trading
+  // Note: binanceTrading is needed for arbitrage strategy even if general trading is disabled
   let binanceTrading: BinanceTrading | null = null;
-  if (binanceApi && defaultTokenConfig.binance?.trading?.enabled) {
-    if (!binanceApiKey || !binanceApiSecret) {
-      logger.warn('Binance trading is enabled in config but API key/secret not provided. Trading will be disabled.');
-    } else {
-      const tradingConfig: IBinanceTradingConfig = {
-        enabled: defaultTokenConfig.binance.trading.enabled,
-        minTradeAmount: defaultTokenConfig.binance.trading.minTradeAmount,
-        maxTradeAmount: defaultTokenConfig.binance.trading.maxTradeAmount,
-        defaultOrderType: defaultTokenConfig.binance.trading.defaultOrderType,
-        tradingPairs: defaultTokenConfig.binance.trading.tradingPairs.map((p: { baseAsset: string; quoteAsset: string; symbol: string; minNotional?: number | undefined }) => {
-          const pair: { baseAsset: string; quoteAsset: string; symbol: string; minNotional?: number } = {
-            baseAsset: p.baseAsset,
-            quoteAsset: p.quoteAsset,
-            symbol: p.symbol,
-          };
-          if (p.minNotional !== undefined) {
-            pair.minNotional = p.minNotional;
-          }
-          return pair;
-        }),
-      };
-      binanceTrading = new BinanceTrading(binanceApi, tradingConfig, logger);
-      logger.info({
-        enabled: tradingConfig.enabled,
-        tradingPairs: tradingConfig.tradingPairs.length,
-        minTradeAmount: tradingConfig.minTradeAmount,
-        maxTradeAmount: tradingConfig.maxTradeAmount,
-      }, 'Binance trading enabled and initialized');
+  if (binanceApi && binanceApiKey && binanceApiSecret) {
+    // Always initialize binanceTrading if API is available (needed for arbitrage)
+    // Use config values if available, otherwise use defaults
+    const tradingConfig: IBinanceTradingConfig = {
+      enabled: defaultTokenConfig.binance?.trading?.enabled ?? false,
+      minTradeAmount: defaultTokenConfig.binance?.trading?.minTradeAmount ?? 10,
+      maxTradeAmount: defaultTokenConfig.binance?.trading?.maxTradeAmount ?? 10000,
+      defaultOrderType: defaultTokenConfig.binance?.trading?.defaultOrderType ?? 'MARKET',
+      tradingPairs: defaultTokenConfig.binance?.trading?.tradingPairs?.map((p: { baseAsset: string; quoteAsset: string; symbol: string; minNotional?: number | undefined }) => {
+        const pair: { baseAsset: string; quoteAsset: string; symbol: string; minNotional?: number } = {
+          baseAsset: p.baseAsset,
+          quoteAsset: p.quoteAsset,
+          symbol: p.symbol,
+        };
+        if (p.minNotional !== undefined) {
+          pair.minNotional = p.minNotional;
+        }
+        return pair;
+      }) ?? [],
+    };
+    binanceTrading = new BinanceTrading(binanceApi, tradingConfig, logger);
+    logger.info({
+      enabled: tradingConfig.enabled,
+      tradingPairs: tradingConfig.tradingPairs.length,
+      minTradeAmount: tradingConfig.minTradeAmount,
+      maxTradeAmount: tradingConfig.maxTradeAmount,
+      note: tradingConfig.enabled ? 'General trading enabled' : 'Initialized for arbitrage only',
+    }, 'Binance trading initialized');
 
-      // Initialize BinanceTradingStrategy with trading pairs from config
+    // Initialize BinanceTradingStrategy only if general trading is enabled
+    if (defaultTokenConfig.binance?.trading?.enabled) {
       const strategyConfig = {
         enabled: tradingConfig.enabled,
         defaultTradeAmount: 10, // Default $10 trades
@@ -264,16 +267,21 @@ async function main(logger: ILogger) {
         tradingPairs: strategyConfig.tradingPairs.length,
         pairs: strategyConfig.tradingPairs.map((p) => p.symbol),
       }, 'BinanceTradingStrategy initialized with trading pairs');
+    } else {
+      logger.info('Binance trading disabled in config - only arbitrage strategy will use Binance');
     }
-  } else if (binanceApi && !defaultTokenConfig.binance?.trading?.enabled) {
-    logger.info('Binance API is available but trading is disabled in token_config.json');
+  } else if (binanceApi) {
+    logger.warn('Binance API is available but API key/secret not provided. Arbitrage strategy will not work.');
   }
 
   // Initialize strategies
+  // For now, only run arbitrage strategy - other trading pairs disabled
   const strategiesToUse = [
-    ...(binanceTradingStrategy ? [binanceTradingStrategy] : []),
-    new BasicSwapAccepterStrategy(),
-    new BasicSwapCreatorStrategy(),
+    new ArbitrageStrategy(), // Spatial arbitrage between GalaSwap and Binance
+    // Disabled other strategies - only arbitrage should run
+    // ...(binanceTradingStrategy ? [binanceTradingStrategy] : []),
+    // new BasicSwapAccepterStrategy(),
+    // new BasicSwapCreatorStrategy(),
   ];
 
   let reporter: IStatusReporter = new ConsoleStatusReporter();

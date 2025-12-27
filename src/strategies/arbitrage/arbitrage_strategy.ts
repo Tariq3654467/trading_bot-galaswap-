@@ -296,23 +296,47 @@ export class ArbitrageStrategy implements ISwapStrategy {
           });
         }
 
-        // If we found a profitable opportunity, compare it with the best one so far
-        if (arbitrageOpportunity && arbitrageOpportunity.netProfit > 0) {
-          if (!bestOpportunity || arbitrageOpportunity.netProfit > bestOpportunity.netProfit) {
-            bestOpportunity = {
-              ...arbitrageOpportunity,
-              tradeAmount: tradeSize,
-              direction: 'GalaSwap->Binance',
-            };
-            logger.info(
-              {
-                tradeSize,
-                netProfit: arbitrageOpportunity.netProfit,
-                pair: arbitrageOpportunity.pair,
+        // If we found an opportunity (profitable or loss if allowed), compare it with the best one so far
+        if (arbitrageOpportunity) {
+          const isProfitable = arbitrageOpportunity.netProfit > 0;
+          const isLossButAllowed = this.ALLOW_LOSS_TRADES && arbitrageOpportunity.netProfit <= 0;
+          
+          if (isProfitable || isLossButAllowed) {
+            // For profitable trades, pick the most profitable
+            // For loss trades, pick the one with smallest loss (least negative)
+            const isBetter = !bestOpportunity || 
+              (isProfitable && arbitrageOpportunity.netProfit > bestOpportunity.netProfit) ||
+              (isLossButAllowed && bestOpportunity.netProfit <= 0 && arbitrageOpportunity.netProfit > bestOpportunity.netProfit);
+            
+            if (isBetter) {
+              bestOpportunity = {
+                ...arbitrageOpportunity,
+                tradeAmount: tradeSize,
                 direction: 'GalaSwap->Binance',
-              },
-              'Found profitable arbitrage opportunity',
-            );
+              };
+              if (isProfitable) {
+                logger.info(
+                  {
+                    tradeSize,
+                    netProfit: arbitrageOpportunity.netProfit,
+                    pair: arbitrageOpportunity.pair,
+                    direction: 'GalaSwap->Binance',
+                  },
+                  'Found profitable arbitrage opportunity',
+                );
+              } else {
+                logger.warn(
+                  {
+                    tradeSize,
+                    netProfit: arbitrageOpportunity.netProfit,
+                    pair: arbitrageOpportunity.pair,
+                    direction: 'GalaSwap->Binance',
+                    note: 'Loss trade selected (ALLOW_LOSS_TRADES enabled)',
+                  },
+                  '⚠️ Found loss arbitrage opportunity (will execute)',
+                );
+              }
+            }
           }
         }
       }
@@ -360,22 +384,42 @@ export class ArbitrageStrategy implements ISwapStrategy {
                 direction: 'Binance->GalaSwap',
               });
 
-              if (reverseOpportunity.netProfit > 0) {
-                if (!bestOpportunity || reverseOpportunity.netProfit > bestOpportunity.netProfit) {
+              const isProfitable = reverseOpportunity.netProfit > 0;
+              const isLossButAllowed = this.ALLOW_LOSS_TRADES && reverseOpportunity.netProfit <= 0;
+              
+              if (isProfitable || isLossButAllowed) {
+                const isBetter = !bestOpportunity || 
+                  (isProfitable && reverseOpportunity.netProfit > bestOpportunity.netProfit) ||
+                  (isLossButAllowed && bestOpportunity.netProfit <= 0 && reverseOpportunity.netProfit > bestOpportunity.netProfit);
+                
+                if (isBetter) {
                   bestOpportunity = {
                     ...reverseOpportunity,
                     tradeAmount: tradeSize,
                     direction: 'Binance->GalaSwap',
                   };
-                  logger.info(
-                    {
-                      tradeSize,
-                      netProfit: reverseOpportunity.netProfit,
-                      pair: reverseOpportunity.pair,
-                      direction: 'Binance->GalaSwap',
-                    },
-                    'Found profitable reverse arbitrage opportunity',
-                  );
+                  if (isProfitable) {
+                    logger.info(
+                      {
+                        tradeSize,
+                        netProfit: reverseOpportunity.netProfit,
+                        pair: reverseOpportunity.pair,
+                        direction: 'Binance->GalaSwap',
+                      },
+                      'Found profitable reverse arbitrage opportunity',
+                    );
+                  } else {
+                    logger.warn(
+                      {
+                        tradeSize,
+                        netProfit: reverseOpportunity.netProfit,
+                        pair: reverseOpportunity.pair,
+                        direction: 'Binance->GalaSwap',
+                        note: 'Loss trade selected (ALLOW_LOSS_TRADES enabled)',
+                      },
+                      '⚠️ Found loss reverse arbitrage opportunity (will execute)',
+                    );
+                  }
                 }
               }
             }

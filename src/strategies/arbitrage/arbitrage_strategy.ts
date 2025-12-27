@@ -32,6 +32,7 @@ export class ArbitrageStrategy implements ISwapStrategy {
   private readonly GALA_AMOUNT: number = 5000; // Maximum amount of GALA to trade
   private readonly MIN_PROFIT_GALA: number = 1; // Minimum profit in GALA to execute (any positive profit)
   private readonly MAX_PROFIT_GALA: number = 30; // Maximum expected profit
+  private readonly ALLOW_LOSS_TRADES: boolean = true; // Allow executing trades even at a loss (for testing/learning)
   // Binance fees: Market orders = 0.1%, Limit maker orders = 0.02% (80% savings!)
   private readonly BINANCE_MARKET_FEE_RATE: number = 0.001; // 0.1% for market orders (current)
   private readonly BINANCE_MAKER_FEE_RATE: number = 0.0002; // 0.02% for limit maker orders (future optimization)
@@ -399,34 +400,59 @@ export class ArbitrageStrategy implements ISwapStrategy {
 
       const arbitrageOpportunity = bestOpportunity;
 
-      // Only execute if profit is positive and meets minimum threshold
-      // This ensures we NEVER execute trades with 0 or negative profit
-      if (arbitrageOpportunity && arbitrageOpportunity.netProfit > 0 && arbitrageOpportunity.netProfit >= this.MIN_PROFIT_GALA) {
-        logger.info(
-          {
-            netProfit: arbitrageOpportunity.netProfit,
-            galaAmount: arbitrageOpportunity.tradeAmount,
-            receivingTokenAmount: arbitrageOpportunity.receivingTokenAmount,
-            galaBuyableOnBinance: arbitrageOpportunity.galaBuyableOnBinance,
-            fees: arbitrageOpportunity.totalFees,
-            pair: arbitrageOpportunity.pair,
-          },
-          'Arbitrage opportunity found! Executing trades...',
-        );
+      // Execute if we have an opportunity and either:
+      // 1. It's profitable and meets minimum threshold, OR
+      // 2. ALLOW_LOSS_TRADES is true (execute even at loss)
+      const isProfitable = arbitrageOpportunity && arbitrageOpportunity.netProfit > 0 && arbitrageOpportunity.netProfit >= this.MIN_PROFIT_GALA;
+      const shouldExecuteLoss = this.ALLOW_LOSS_TRADES && arbitrageOpportunity && arbitrageOpportunity.netProfit <= 0;
+      
+      if (isProfitable || shouldExecuteLoss) {
+        const isLoss = arbitrageOpportunity!.netProfit <= 0;
+        
+        if (isLoss) {
+          logger.warn(
+            {
+              netProfit: arbitrageOpportunity!.netProfit.toFixed(4),
+              galaAmount: arbitrageOpportunity!.tradeAmount,
+              receivingTokenAmount: arbitrageOpportunity!.receivingTokenAmount,
+              galaBuyableOnBinance: arbitrageOpportunity!.galaBuyableOnBinance,
+              fees: arbitrageOpportunity!.totalFees,
+              pair: arbitrageOpportunity!.pair,
+              warning: '⚠️ EXECUTING TRADE AT A LOSS (ALLOW_LOSS_TRADES enabled)',
+            },
+            '⚠️ Arbitrage opportunity found but will result in LOSS - executing anyway',
+          );
 
-        await reporter.sendAlert(
-          `🚀 Arbitrage Opportunity: ${arbitrageOpportunity.netProfit.toFixed(2)} GALA profit (${arbitrageOpportunity.tradeAmount} GALA trade)`,
-        );
+          await reporter.sendAlert(
+            `⚠️ Arbitrage Trade (LOSS): ${arbitrageOpportunity!.netProfit.toFixed(2)} GALA loss (${arbitrageOpportunity!.tradeAmount} GALA trade)`,
+          );
+        } else {
+          logger.info(
+            {
+              netProfit: arbitrageOpportunity!.netProfit,
+              galaAmount: arbitrageOpportunity!.tradeAmount,
+              receivingTokenAmount: arbitrageOpportunity!.receivingTokenAmount,
+              galaBuyableOnBinance: arbitrageOpportunity!.galaBuyableOnBinance,
+              fees: arbitrageOpportunity!.totalFees,
+              pair: arbitrageOpportunity!.pair,
+            },
+            'Arbitrage opportunity found! Executing trades...',
+          );
 
-        // Execute arbitrage trades on both platforms
+          await reporter.sendAlert(
+            `🚀 Arbitrage Opportunity: ${arbitrageOpportunity!.netProfit.toFixed(2)} GALA profit (${arbitrageOpportunity!.tradeAmount} GALA trade)`,
+          );
+        }
+
+        // Execute arbitrage trades on both platforms (even if at a loss)
         await this.executeArbitrage(
           logger,
           options.binanceApi,
           options.binanceTrading,
           options.galaChainRouter,
-          arbitrageOpportunity,
-          arbitrageOpportunity.tradeAmount,
-          arbitrageOpportunity.direction || 'GalaSwap->Binance',
+          arbitrageOpportunity!,
+          arbitrageOpportunity!.tradeAmount,
+          arbitrageOpportunity!.direction || 'GalaSwap->Binance',
         );
       } else if (arbitrageOpportunity) {
         logger.info(
@@ -434,11 +460,14 @@ export class ArbitrageStrategy implements ISwapStrategy {
             netProfit: arbitrageOpportunity.netProfit.toFixed(4),
             minRequired: this.MIN_PROFIT_GALA,
             galaAmount: arbitrageOpportunity.tradeAmount,
+            allowLossTrades: this.ALLOW_LOSS_TRADES,
             note: arbitrageOpportunity.netProfit <= 0 
-              ? 'Trade would result in LOSS - not executing' 
+              ? (this.ALLOW_LOSS_TRADES 
+                  ? 'Trade would result in LOSS but ALLOW_LOSS_TRADES is enabled - should execute but opportunity not selected'
+                  : 'Trade would result in LOSS - not executing (ALLOW_LOSS_TRADES disabled)')
               : 'Profit below minimum threshold',
           },
-          'Arbitrage opportunity found but not profitable enough',
+          'Arbitrage opportunity found but not executing',
         );
       } else {
         // Log summary of all opportunities checked

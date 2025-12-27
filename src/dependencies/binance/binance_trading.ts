@@ -54,33 +54,36 @@ export class BinanceTrading {
   }
 
   /**
-   * Execute a trade for arbitrage purposes (bypasses enabled check)
+   * Execute a trade for arbitrage purposes (bypasses enabled check and min/max trade amount checks)
    * This allows arbitrage strategy to execute trades even when general Binance trading is disabled
+   * and allows smaller trades that may be below the configured minimum
    */
   async executeTradeForArbitrage(trade: IBinanceTrade): Promise<IBinanceOrder> {
     this.logger?.info({
-      message: 'Executing Binance trade for arbitrage (bypassing enabled check)',
+      message: 'Executing Binance trade for arbitrage (bypassing enabled check and min/max limits)',
       trade,
     });
-    return this.executeTradeInternal(trade);
+    return this.executeTradeInternal(trade, true);
   }
 
-  private async executeTradeInternal(trade: IBinanceTrade): Promise<IBinanceOrder> {
-    // Validate trade amount
-    const tradeAmount = trade.price
-      ? BigNumber(trade.quantity).multipliedBy(trade.price)
-      : BigNumber(trade.quantity);
+  private async executeTradeInternal(trade: IBinanceTrade, skipAmountChecks: boolean = false): Promise<IBinanceOrder> {
+    // Validate trade amount (skip for arbitrage trades)
+    if (!skipAmountChecks) {
+      const tradeAmount = trade.price
+        ? BigNumber(trade.quantity).multipliedBy(trade.price)
+        : BigNumber(trade.quantity);
 
-    if (tradeAmount.isLessThan(this.config.minTradeAmount)) {
-      throw new Error(
-        `Trade amount ${tradeAmount.toString()} is below minimum ${this.config.minTradeAmount}`,
-      );
-    }
+      if (tradeAmount.isLessThan(this.config.minTradeAmount)) {
+        throw new Error(
+          `Trade amount ${tradeAmount.toString()} is below minimum ${this.config.minTradeAmount}`,
+        );
+      }
 
-    if (tradeAmount.isGreaterThan(this.config.maxTradeAmount)) {
-      throw new Error(
-        `Trade amount ${tradeAmount.toString()} exceeds maximum ${this.config.maxTradeAmount}`,
-      );
+      if (tradeAmount.isGreaterThan(this.config.maxTradeAmount)) {
+        throw new Error(
+          `Trade amount ${tradeAmount.toString()} exceeds maximum ${this.config.maxTradeAmount}`,
+        );
+      }
     }
 
     // Check balance

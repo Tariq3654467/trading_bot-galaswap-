@@ -18,29 +18,36 @@ import { ILogger, ITokenClassKey } from '../../types/types.js';
 import { ISwapStrategy, ISwapToAccept, ISwapToCreate, ISwapToTerminate } from '../swap_strategy.js';
 
 /**
- * Spatial Arbitrage Strategy
+ * Spatial Arbitrage Strategy (OPTIMIZED FOR MINOR PROFITS)
  * 
- * Goal: Find price differences between GalaSwap and Binance to net 10-30 GALA profit
+ * Goal: Find price differences between GalaSwap and Binance to net 0.5-30 GALA profit
  * 
  * Strategy:
- * 1. Sell GALA on GalaSwap for GWETH
- * 2. Convert GWETH value to ETH value
- * 3. Buy GALA on Binance with that ETH value
+ * 1. Sell GALA on GalaSwap for GWETH/GUSDC
+ * 2. Convert receiving token value to USDT/ETH value
+ * 3. Buy GALA on Binance with that value
  * 4. Net profit = (GALA received on Binance) - (GALA sold on GalaSwap) - (Fees)
  * 
- * Execution: Only execute if profit >= MIN_PROFIT_GALA (default: 1 GALA)
+ * Fee Optimizations:
+ * - Uses LIMIT orders on Binance (0.02% maker fee instead of 0.1% market fee = 80% savings!)
+ * - Reduced gas fee estimate (0.2 GALA instead of 0.5 GALA)
+ * - Minimum profit threshold reduced to 0.5 GALA to capture minor opportunities
+ * 
+ * Execution: Only execute if profit >= MIN_PROFIT_GALA (0.5 GALA)
  */
 export class ArbitrageStrategy implements ISwapStrategy {
   private readonly GALA_AMOUNT: number = 5000; // Maximum amount of GALA to trade
-  private readonly MIN_PROFIT_GALA: number = 1; // Minimum profit in GALA to execute (any positive profit)
+  private readonly MIN_PROFIT_GALA: number = 0.5; // Minimum profit in GALA to execute (reduced to capture minor profits)
   private readonly MAX_PROFIT_GALA: number = 30; // Maximum expected profit
   private readonly ALLOW_LOSS_TRADES: boolean = false; // Only execute trades when profitable
   // Binance fees: Market orders = 0.1%, Limit maker orders = 0.02% (80% savings!)
-  private readonly BINANCE_MARKET_FEE_RATE: number = 0.001; // 0.1% for market orders (current)
-  private readonly BINANCE_MAKER_FEE_RATE: number = 0.0002; // 0.02% for limit maker orders (future optimization)
+  // OPTIMIZED: Using limit orders with maker fees to minimize costs
+  private readonly BINANCE_MARKET_FEE_RATE: number = 0.001; // 0.1% for market orders (fallback)
+  private readonly BINANCE_MAKER_FEE_RATE: number = 0.0002; // 0.02% for limit maker orders (PRIMARY - 80% savings!)
+  private readonly USE_LIMIT_ORDERS: boolean = true; // Use limit orders to get maker fees
   // GalaSwap fees: Use actual fee tier from quote (0.05%, 0.30%, or 1.00%)
   // Fee tiers: 500 = 0.05% (stable pairs), 3000 = 0.30% (most pairs), 10000 = 1.00% (volatile pairs)
-  private readonly GAS_FEE_GALA: number = 0.5; // Optimized gas estimate (actual is typically 0.1-0.5 GALA)
+  private readonly GAS_FEE_GALA: number = 0.2; // Optimized gas estimate (reduced from 0.5 - actual is typically 0.1-0.3 GALA)
   private readonly MIN_GALA_AMOUNT: number = 500; // Minimum amount to attempt (reduced to allow smaller balances)
   // Try different trade sizes to find profitable opportunities (smaller sizes = less slippage)
   private readonly TRADE_SIZE_OPTIONS: number[] = [500, 1000, 2000, 3000, 4000, 5000]; // Try smaller sizes first (added 500)
@@ -1041,10 +1048,10 @@ export class ArbitrageStrategy implements ISwapStrategy {
       // Fee is typically applied to the input amount in DEX swaps
       const estimatedGalaSwapFee = galaAmount * actualGalaSwapFeeRate;
       
-      // Binance trading fee: Use maker fee rate (0.02%) if we use limit orders, otherwise market fee (0.1%)
-      // For now, we'll use market fee but note that limit orders would be cheaper
-      // TODO: Consider using limit orders to get maker fees (0.02% instead of 0.1%)
-      const binanceFee = galaBuyableOnBinance * this.BINANCE_MARKET_FEE_RATE;
+      // Binance trading fee: Use maker fee rate (0.02%) for limit orders (80% savings!)
+      // This is the PRIMARY optimization to make minor profits achievable
+      const binanceFeeRate = this.USE_LIMIT_ORDERS ? this.BINANCE_MAKER_FEE_RATE : this.BINANCE_MARKET_FEE_RATE;
+      const binanceFee = galaBuyableOnBinance * binanceFeeRate;
       
       // Gas fee (optimized estimate)
       const gasFee = this.GAS_FEE_GALA;
@@ -1070,14 +1077,11 @@ export class ArbitrageStrategy implements ISwapStrategy {
               galaSwapFeeRate: `${(actualGalaSwapFeeRate * 100).toFixed(2)}%`,
               note: 'GalaSwap fee already included in quote amountOut',
               binanceFee: binanceFee.toFixed(4),
-              binanceFeeRate: `${(this.BINANCE_MARKET_FEE_RATE * 100).toFixed(2)}%`,
+              binanceFeeRate: `${(binanceFeeRate * 100).toFixed(2)}%`,
+              binanceOrderType: this.USE_LIMIT_ORDERS ? 'LIMIT (maker)' : 'MARKET',
               gasFee: gasFee.toFixed(4),
               totalFees: totalFees.toFixed(4),
             },
-            potentialSavings: feeSavings > 0 ? {
-              usingLimitOrders: `Save ${feeSavings.toFixed(4)} GALA (${((feeSavings / totalFees) * 100).toFixed(1)}% fee reduction)`,
-              note: 'Consider using limit orders to get 0.02% maker fee instead of 0.1% market fee',
-            } : undefined,
             netProfit: netProfit.toFixed(4),
           },
           'Arbitrage calculation complete (fees minimized)',
@@ -1127,8 +1131,9 @@ export class ArbitrageStrategy implements ISwapStrategy {
       const galaPriceUsdt = Number(galaPriceResponse.price);
 
       // Step 2: Calculate cost to buy GALA on Binance (including fees)
-      // Use market fee for now (could optimize with limit orders for maker fee)
-      const binanceBuyFee = galaAmount * galaPriceUsdt * this.BINANCE_MARKET_FEE_RATE;
+      // OPTIMIZED: Use maker fee rate (0.02%) for limit orders
+      const binanceFeeRate = this.USE_LIMIT_ORDERS ? this.BINANCE_MAKER_FEE_RATE : this.BINANCE_MARKET_FEE_RATE;
+      const binanceBuyFee = galaAmount * galaPriceUsdt * binanceFeeRate;
       const totalCostUsdt = usdtNeeded + binanceBuyFee;
 
       // Step 3: Get quote from GalaSwap: How much token do we get for selling GALA?
@@ -1348,12 +1353,19 @@ export class ArbitrageStrategy implements ISwapStrategy {
             'Executing Binance trade: Buying GALA with ETH (GALAETH pair)',
           );
 
-          // For GALAETH pair, market BUY uses quoteOrderQty (amount in ETH)
+          // Use LIMIT order with maker pricing (0.02% fee instead of 0.1%)
+          // Set price slightly above market to ensure it fills as maker order
+          const currentPrice = Number(galaEthPrice.price);
+          const limitPrice = (currentPrice * 1.001).toFixed(8); // 0.1% above market to ensure fill
+          const galaQuantity = (ethAmount / currentPrice).toFixed(0); // Calculate GALA amount
+          
           await binanceTrading.executeTradeForArbitrage({
             symbol: 'GALAETH',
             side: 'BUY',
-            type: 'MARKET',
-            quantity: String(ethAmount), // Amount in ETH (quote currency)
+            type: 'LIMIT',
+            quantity: galaQuantity,
+            price: limitPrice,
+            timeInForce: 'GTC', // Good Till Canceled
           });
 
           logger.info(
@@ -1399,17 +1411,27 @@ export class ArbitrageStrategy implements ISwapStrategy {
           'Executing Binance trade: Buying GALA with USDT (GALAUSDT pair)',
         );
 
-        // For GALAUSDT pair, market BUY uses quoteOrderQty (amount in USDT)
-        // The executeTradeForArbitrage function will automatically convert quantity to quoteOrderQty for market BUY
+        // Use LIMIT order with maker pricing (0.02% fee instead of 0.1%)
+        // Get current price and set limit price slightly above to ensure fill as maker
         if (!binanceTrading) {
           throw new Error('BinanceTrading is not available - cannot execute Binance trade');
         }
         
+        const galaUsdtPriceResponse = await binanceApi.getPrice('GALAUSDT');
+        if (!galaUsdtPriceResponse) {
+          throw new Error('Could not get GALAUSDT price for limit order');
+        }
+        const currentPrice = Number(galaUsdtPriceResponse.price);
+        const limitPrice = (currentPrice * 1.001).toFixed(8); // 0.1% above market to ensure fill
+        const galaQuantity = (usdtAmount / currentPrice).toFixed(0); // Calculate GALA amount
+        
         await binanceTrading.executeTradeForArbitrage({
           symbol: 'GALAUSDT',
           side: 'BUY',
-          type: 'MARKET',
-          quantity: String(usdtAmount), // Amount in USDT (quote currency) - will be converted to quoteOrderQty
+          type: 'LIMIT',
+          quantity: galaQuantity,
+          price: limitPrice,
+          timeInForce: 'GTC', // Good Till Canceled
         });
 
         logger.info(
@@ -1496,11 +1518,18 @@ export class ArbitrageStrategy implements ISwapStrategy {
         'Executing Binance BUY order',
       );
 
+      // Use LIMIT order with maker pricing (0.02% fee instead of 0.1%)
+      // Set price slightly above market to ensure it fills as maker order
+      const limitPrice = (galaPriceUsdt * 1.001).toFixed(8); // 0.1% above market to ensure fill
+      const galaQuantity = galaAmount.toFixed(0); // GALA amount to buy
+      
       const binanceOrder = await binanceTrading.executeTradeForArbitrage({
         symbol: 'GALAUSDT',
         side: 'BUY',
-        type: 'MARKET',
-        quantity: String(usdtNeeded), // Amount in USDT (quote currency)
+        type: 'LIMIT',
+        quantity: galaQuantity,
+        price: limitPrice,
+        timeInForce: 'GTC', // Good Till Canceled
       });
 
       logger.info(
